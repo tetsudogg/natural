@@ -5,7 +5,7 @@ import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferG
 import { HALF, clearingFactor, forestDensity, streamDist, streamX, WATERFALL_Z } from './world';
 import { groundHeight, groundSlope } from './terrain';
 import { fbm, mulberry32 } from './noise';
-import { foliageTexture } from './textures';
+import { barkTexture, fernTexture, flowerAtlas, foliageTexture, rockTexture, type FlowerKind } from './textures';
 
 export const windUniforms = { uTime: { value: 0 }, uWind: { value: 0.5 } };
 
@@ -66,13 +66,12 @@ function colored(geo: THREE.BufferGeometry, color: THREE.Color, jitter = 0, seed
     colors[i * 3 + 2] = color.b * shade;
   }
   g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  g.deleteAttribute('uv');
   g.computeVertexNormals();
   return g;
 }
 
-const BARK = srgb(0.36, 0.29, 0.23);
-const CEDAR_BARK = srgb(0.42, 0.28, 0.2);
+const BARK = srgb(0.62, 0.55, 0.47);
+const CEDAR_BARK = srgb(0.66, 0.46, 0.34);
 
 // One card: a square with the leaf texture. Normals point away from the crown's centre,
 // and colour darkens toward the bottom and inside of the crown (cheap ambient occlusion).
@@ -107,7 +106,7 @@ interface TreeParts {
 // Japanese cedar: tall straight trunk, narrow conical crown of drooping sprays.
 function cedarGeometry(seed: number): TreeParts {
   const rnd = mulberry32(seed);
-  const trunk = new THREE.CylinderGeometry(0.16, 0.34, 20, 7);
+  const trunk = new THREE.CylinderGeometry(0.16, 0.36, 20, 12);
   trunk.translate(0, 10, 0);
   const cards: THREE.BufferGeometry[] = [];
   const center = new THREE.Vector3(0, 12.5, 0);
@@ -134,7 +133,7 @@ function broadleafGeometry(seed: number): TreeParts {
   const rnd = mulberry32(seed);
   const wood: THREE.BufferGeometry[] = [];
   const trunkH = 5 + rnd() * 1.5;
-  const trunk = new THREE.CylinderGeometry(0.2, 0.36, trunkH, 7);
+  const trunk = new THREE.CylinderGeometry(0.2, 0.38, trunkH, 12);
   trunk.translate(0, trunkH / 2, 0);
   wood.push(colored(trunk, BARK));
   for (let i = 0; i < 4; i++) {
@@ -214,29 +213,99 @@ function grassClumpGeometry() {
   return g;
 }
 
-// A boulder: a lumpy sphere with smooth shading.
-function rockGeometry() {
-  const g = new THREE.IcosahedronGeometry(1, 2);
+// A boulder: a lumpy sphere cut by a few flat fracture planes, with a flat underside.
+// Mossy rocks get green on their upward-facing parts.
+function rockGeometry(seed: number, mossy: boolean) {
+  const rnd = mulberry32(seed);
+  const g = new THREE.IcosahedronGeometry(1, 3);
   const p = g.attributes.position as THREE.BufferAttribute;
   const v = new THREE.Vector3();
+  const cuts = Array.from({ length: 4 }, () => ({
+    n: new THREE.Vector3(rnd() * 2 - 1, rnd() * 1.2 - 0.2, rnd() * 2 - 1).normalize(),
+    d: 0.55 + rnd() * 0.3,
+  }));
   for (let i = 0; i < p.count; i++) {
     v.set(p.getX(i), p.getY(i), p.getZ(i));
-    const n = fbm(v.x * 1.3 + 5, v.y * 1.3 + v.z * 0.7, 3);
-    v.multiplyScalar(0.75 + n * 0.5);
-    if (v.y < -0.2) v.y = -0.2 + (v.y + 0.2) * 0.3; // flatter underside
+    const n = fbm(v.x * 1.6 + seed, v.y * 1.6 + v.z * 0.9, 4);
+    v.multiplyScalar(0.8 + n * 0.45);
+    for (const c of cuts) {
+      const over = v.dot(c.n) - c.d;
+      if (over > 0) v.addScaledVector(c.n, -over * 0.9);
+    }
+    if (v.y < -0.25) v.y = -0.25 + (v.y + 0.25) * 0.25;
     p.setXYZ(i, v.x, v.y, v.z);
   }
-  const merged = mergeVertices(g);
+  const merged = mergeVertices(g, 1e-3);
   merged.computeVertexNormals();
-  const cols = new Float32Array(merged.attributes.position.count * 3);
-  const rnd = mulberry32(4);
-  for (let i = 0; i < cols.length; i += 3) {
-    const y = merged.attributes.position.getY(i / 3);
-    const shade = (0.8 + rnd() * 0.2) * (0.75 + 0.25 * THREE.MathUtils.clamp(y + 0.5, 0, 1));
-    cols[i] = cols[i + 1] = cols[i + 2] = shade;
+  const count = merged.attributes.position.count;
+  const nrm = merged.attributes.normal as THREE.BufferAttribute;
+  const pos = merged.attributes.position as THREE.BufferAttribute;
+  const cols = new Float32Array(count * 3);
+  const stone = srgb(0.62, 0.6, 0.56);
+  const moss = srgb(0.36, 0.46, 0.2);
+  const c = new THREE.Color();
+  for (let i = 0; i < count; i++) {
+    const up = nrm.getY(i);
+    const ao = 0.7 + 0.3 * THREE.MathUtils.clamp(pos.getY(i) + 0.4, 0, 1);
+    c.copy(stone);
+    if (mossy) c.lerp(moss, THREE.MathUtils.smoothstep(up, 0.35, 0.75) * (0.6 + 0.4 * fbm(pos.getX(i) * 3, pos.getZ(i) * 3, 2)));
+    c.multiplyScalar(ao);
+    cols.set([c.r, c.g, c.b], i * 3);
   }
   merged.setAttribute('color', new THREE.BufferAttribute(cols, 3));
   return merged;
+}
+
+// Wildflowers: two crossed cards showing one quarter of the flower atlas.
+function flowerGeometry(kind: FlowerKind) {
+  const u0 = (kind % 2) * 0.5;
+  const v0 = kind < 2 ? 0.5 : 0; // canvas row 0 is the top of the texture
+  const parts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 2; i++) {
+    const g = new THREE.PlaneGeometry(0.6, 0.6);
+    g.translate(0, 0.3, 0);
+    g.rotateY((i * Math.PI) / 2);
+    const uv = g.attributes.uv as THREE.BufferAttribute;
+    for (let k = 0; k < uv.count; k++) uv.setXY(k, u0 + uv.getX(k) * 0.5, v0 + uv.getY(k) * 0.5);
+    const n = g.attributes.normal as THREE.BufferAttribute;
+    for (let k = 0; k < n.count; k++) n.setXYZ(k, 0, 1, 0);
+    parts.push(g);
+  }
+  return mergeGeometries(parts)!;
+}
+
+// A fern: fronds arching out and down from the centre.
+function fernGeometry() {
+  const rnd = mulberry32(61);
+  const parts: THREE.BufferGeometry[] = [];
+  const fronds = 7;
+  for (let i = 0; i < fronds; i++) {
+    const len = 0.9 + rnd() * 0.4;
+    const g = new THREE.PlaneGeometry(0.45, len, 1, 4);
+    g.translate(0, len / 2, 0);
+    const p = g.attributes.position as THREE.BufferAttribute;
+    // Arch: the frond leaves the ground steeply and bends outward toward its tip.
+    const arc = (t: number) => {
+      let y = 0;
+      let z = 0;
+      const steps = 20;
+      for (let k = 0; k < steps; k++) {
+        const ang = 0.3 + ((k + 0.5) / steps) * t * 1.1;
+        y += (Math.cos(ang) * len * t) / steps;
+        z += (Math.sin(ang) * len * t) / steps;
+      }
+      return [y, z];
+    };
+    for (let k = 0; k < p.count; k++) {
+      const [y, z] = arc(p.getY(k) / len);
+      p.setXYZ(k, p.getX(k), y, z);
+    }
+    g.rotateY((i / fronds) * Math.PI * 2 + rnd() * 0.5);
+    const n = g.attributes.normal as THREE.BufferAttribute;
+    for (let k = 0; k < n.count; k++) n.setXYZ(k, 0, 1, 0);
+    parts.push(g);
+  }
+  return mergeGeometries(parts)!;
 }
 
 interface Placement {
@@ -331,7 +400,9 @@ export function createVegetation() {
     }
   }
 
-  const woodMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 });
+  const bark = barkTexture();
+  bark.repeat.set(2, 5);
+  const woodMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: bark, roughness: 0.95 });
   addWind(woodMat, 0.0005, 2);
   const leafMat = (kind: 'leaf' | 'needle', seed: number, sway = 0.0005, stiffness = 2) => {
     const m = new THREE.MeshStandardMaterial({
@@ -363,7 +434,7 @@ export function createVegetation() {
     const x = (rnd() * 2 - 1) * (HALF - 3);
     const z = (rnd() * 2 - 1) * (HALF - 3);
     const d = streamDist(x, z);
-    if (d < 4.2 || d > 90) continue;
+    if (d < 4.2 || d > 110) continue;
     const open = 1 - forestDensity(x, z);
     if (rnd() > open * open * (d < 30 ? 1 : 0.5)) continue;
     if (groundSlope(x, z) > 0.6) continue;
@@ -377,20 +448,22 @@ export function createVegetation() {
     grass.push({ m, c: srgb(0.42, 0.56, 0.22).lerp(srgb(0.62, 0.6, 0.32), Math.max(0, dry - 0.45) * 1.5).multiplyScalar(0.85 + rnd() * 0.3) });
   }
   const grassMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide });
-  addWind(grassMat, 0.12, 2);
+  addWind(grassMat, 0.12, 2, true);
   const grassGroup = chunked(grassClumpGeometry(), grassMat, grass, 30, { maxDist: 90 });
   group.add(grassGroup);
 
   // Rocks: pebbles in the stream, boulders on the banks and by the waterfall.
-  const rocks: Placement[] = [];
+  const rocks: Placement[][] = [[], [], [], []];
   const addRock = (x: number, z: number, s: number, sink: number) => {
     const m = new THREE.Matrix4().compose(
       new THREE.Vector3(x, groundHeight(x, z) - sink * s, z),
-      new THREE.Quaternion().setFromEuler(new THREE.Euler(rnd() * 3, rnd() * 3, rnd() * 3)),
-      new THREE.Vector3(s * (0.8 + rnd() * 0.6), s * (0.5 + rnd() * 0.4), s * (0.8 + rnd() * 0.6)),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler((rnd() - 0.5) * 0.4, rnd() * 6.28, (rnd() - 0.5) * 0.4)),
+      new THREE.Vector3(s * (0.8 + rnd() * 0.6), s * (0.55 + rnd() * 0.4), s * (0.8 + rnd() * 0.6)),
     );
-    const moss = rnd() < 0.4;
-    rocks.push({ m, c: moss ? srgb(0.42, 0.48, 0.32) : new THREE.Color().setHSL(0.08, 0.05, 0.42 + rnd() * 0.18, THREE.SRGBColorSpace) });
+    // Rocks away from the water are more often mossy.
+    const wet = streamDist(x, z) < 4;
+    const shape = Math.floor(rnd() * 2) + (!wet && rnd() < 0.55 ? 2 : 0);
+    rocks[shape].push({ m, c: new THREE.Color().setHSL(0.08, 0.06, 0.75 + rnd() * 0.25, THREE.SRGBColorSpace) });
   };
   for (let i = 0; i < 700; i++) {
     const z = (rnd() * 2 - 1) * (HALF - 5);
@@ -408,10 +481,58 @@ export function createVegetation() {
     if (streamDist(x, z) < 5 || clearingFactor(x, z) > 0.3) continue;
     addRock(x, z, 0.3 + rnd() * rnd() * 2.5, 0.4);
   }
-  const rockGeo = rockGeometry();
-  const rockMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
-  const rockGroup = chunked(rockGeo, rockMat, rocks, 60, { shadow: true, maxDist: 260 });
-  group.add(rockGroup);
+  const rockTex = rockTexture();
+  rockTex.repeat.set(2, 2);
+  const rockMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: rockTex, roughness: 0.88 });
+  const rockGroups = rocks.map((list, i) => chunked(rockGeometry(40 + (i % 2) * 7, i >= 2), rockMat, list, 60, { shadow: true, maxDist: 260 }));
+  group.add(...rockGroups);
 
-  return { group, cullGroups: [grassGroup, bushGroup, rockGroup], treeSpots };
+  // Wildflowers grow in drifts on open ground; each kind prefers its own patches.
+  const flowers: Placement[][] = [[], [], [], []];
+  for (let i = 0; i < 420000; i++) {
+    const x = (rnd() * 2 - 1) * (HALF - 3);
+    const z = (rnd() * 2 - 1) * (HALF - 3);
+    const d = streamDist(x, z);
+    if (d < 4.5 || d > 110) continue;
+    const kind = Math.floor(rnd() * 4) as FlowerKind;
+    const patch = fbm(x * 0.035 + kind * 31, z * 0.035 - kind * 17, 2);
+    const open = 1 - forestDensity(x, z);
+    const wetLover = kind === 3 ? 1 - THREE.MathUtils.smoothstep(d, 6, 25) : 1; // dayflowers near water
+    if (rnd() > THREE.MathUtils.smoothstep(patch, 0.48, 0.62) * open * wetLover + clearingFactor(x, z) * 0.08) continue;
+    if (groundSlope(x, z) > 0.55) continue;
+    const s = 0.9 + rnd() * 0.6;
+    const m = new THREE.Matrix4().compose(
+      new THREE.Vector3(x, groundHeight(x, z) - 0.03, z),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6.28),
+      new THREE.Vector3(s, s, s),
+    );
+    flowers[kind].push({ m, c: new THREE.Color().setHSL(0, 0, 0.85 + rnd() * 0.15, THREE.SRGBColorSpace) });
+  }
+  const flowerMat = new THREE.MeshStandardMaterial({ map: flowerAtlas(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.8 });
+  addWind(flowerMat, 0.25, 2, true);
+  const flowerGroups = flowers.map((list, k) => chunked(flowerGeometry(k as FlowerKind), flowerMat, list, 30, { maxDist: 75 }));
+  group.add(...flowerGroups);
+
+  // Ferns cover the forest floor and shady banks.
+  const ferns: Placement[] = [];
+  for (let i = 0; i < 120000; i++) {
+    const x = (rnd() * 2 - 1) * (HALF - 3);
+    const z = (rnd() * 2 - 1) * (HALF - 3);
+    const dens = forestDensity(x, z);
+    if (rnd() > THREE.MathUtils.smoothstep(dens, 0.2, 0.7) * 0.5) continue;
+    if (groundSlope(x, z) > 0.8) continue;
+    const s = 0.6 + rnd() * 0.7;
+    const m = new THREE.Matrix4().compose(
+      new THREE.Vector3(x, groundHeight(x, z) - 0.05, z),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6.28),
+      new THREE.Vector3(s, s, s),
+    );
+    ferns.push({ m, c: new THREE.Color().setHSL(0.26, 0.5, 0.4 + rnd() * 0.15, THREE.SRGBColorSpace) });
+  }
+  const fernMat = new THREE.MeshStandardMaterial({ map: fernTexture(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.85 });
+  addWind(fernMat, 0.08, 1.5, true);
+  const fernGroup = chunked(fernGeometry(), fernMat, ferns, 30, { maxDist: 85, shadow: false });
+  group.add(fernGroup);
+
+  return { group, cullGroups: [grassGroup, bushGroup, fernGroup, ...rockGroups, ...flowerGroups], treeSpots };
 }
