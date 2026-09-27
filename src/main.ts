@@ -1,0 +1,290 @@
+import * as THREE from 'three';
+import { createTerrain } from './terrain';
+import { createVegetation, updateDistanceCulling, windUniforms } from './vegetation';
+import { createStream, createFireflies } from './water';
+import { createSky } from './sky';
+import { Player, type ViewMode } from './player';
+import { Soundscape } from './audio';
+import { clearings } from './world';
+
+const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+
+const TIME_SPEEDS = [
+  { label: '時間：標準（1日 約40分）', hoursPerSecond: 24 / 2400 },
+  { label: '時間：早回し（1日 約2分）', hoursPerSecond: 24 / 120 },
+  { label: '時間：現実と同じ', hoursPerSecond: 1 / 3600 },
+];
+
+type ViewMotion = 'still' | 'pan';
+const MOTION_LABEL: Record<ViewMotion, string> = { still: 'カメラ：固定', pan: 'カメラ：ゆっくり見渡す' };
+
+interface Save {
+  x: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+  hour: number;
+  view: ViewMode;
+  speed: number;
+}
+
+const SAVE_KEY = 'natural.save.v1';
+
+function loadSave(): Save | null {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    return raw ? (JSON.parse(raw) as Save) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSave(s: Save) {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(s));
+  } catch {
+    // Storage can be unavailable (private windows); the game still works.
+  }
+}
+
+let toastTimer = 0;
+function toast(text: string) {
+  const el = $('toast');
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+async function main() {
+  const canvas = $<HTMLCanvasElement>('scene');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 5000);
+
+  // Let the loading text paint before the heavy world build.
+  await new Promise((r) => setTimeout(r, 30));
+
+  const sky = createSky(scene, renderer);
+  scene.add(createTerrain());
+  const veg = createVegetation();
+  scene.add(veg.group);
+  const stream = createStream();
+  scene.add(stream.mesh);
+  const fireflies = createFireflies();
+  scene.add(fireflies.points);
+
+  const saved = loadSave();
+  const home = clearings[0];
+  const player = new Player(saved?.x ?? home.x - 6, saved?.z ?? home.z, saved?.yaw ?? Math.PI / 2 - 0.35);
+  player.pitch = saved?.pitch ?? -0.05;
+  player.setView(saved?.view ?? 'first');
+  scene.add(player.body);
+
+  let hour = saved?.hour ?? 6.4;
+  let speedIndex = saved?.speed ?? 0;
+
+  const sound = new Soundscape();
+  player.onStep = (ground, running) => sound.footstep(ground, running);
+
+  // Warm up shaders so the first frame after "start" does not stutter.
+  sky.update(hour, player.position);
+  player.applyCamera(camera);
+  renderer.compile(scene, camera);
+  renderer.render(scene, camera);
+
+  $('loading').hidden = true;
+  const startBtn = $<HTMLButtonElement>('start');
+  startBtn.hidden = false;
+  startBtn.focus();
+
+  let started = false;
+  let viewing = false;
+  let motion: ViewMotion = 'still';
+  let viewBaseYaw = 0;
+  let viewClock = 0;
+  let helpTimer = 0;
+  let pointerTimer = 0;
+
+  const hud = $('hud');
+  const help = $('help');
+  const pause = $('pause');
+
+  function lock() {
+    const p = canvas.requestPointerLock() as unknown as Promise<void> | undefined;
+    p?.catch?.(() => {});
+  }
+
+  function showHelpBriefly() {
+    help.classList.remove('off');
+    clearTimeout(helpTimer);
+    helpTimer = window.setTimeout(() => help.classList.add('off'), 9000);
+  }
+
+  function start() {
+    if (started) return;
+    started = true;
+    sound.start();
+    $('title').classList.add('fade');
+    setTimeout(() => ($('title').hidden = true), 1300);
+    lock();
+    showHelpBriefly();
+  }
+
+  function enterView() {
+    viewing = true;
+    viewBaseYaw = player.yaw;
+    viewClock = 0;
+    player.releaseKeys();
+    if (document.pointerLockElement) document.exitPointerLock();
+    pause.hidden = true;
+    hud.classList.add('hidden');
+    document.body.classList.add('viewing');
+    toast(`眺めモード　${MOTION_LABEL[motion]}（C で切替、V で戻る）`);
+  }
+
+  function exitView() {
+    viewing = false;
+    hud.classList.remove('hidden');
+    document.body.classList.remove('viewing');
+    toast('歩くモード');
+    lock();
+  }
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void document.documentElement.requestFullscreen?.().catch(() => toast('全画面にできませんでした'));
+  }
+
+  startBtn.addEventListener('click', start);
+  $('view-btn').addEventListener('click', () => (viewing ? exitView() : enterView()));
+  pause.addEventListener('click', () => {
+    pause.hidden = true;
+    lock();
+  });
+  canvas.addEventListener('click', () => {
+    if (!started) return;
+    if (viewing) exitView();
+    else if (!document.pointerLockElement) lock();
+  });
+
+  document.addEventListener('pointerlockchange', () => {
+    const locked = document.pointerLockElement === canvas;
+    if (!locked) player.releaseKeys();
+    pause.hidden = locked || viewing || !started;
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (document.pointerLockElement === canvas && !viewing) player.look(e.movementX, e.movementY);
+    if (viewing) {
+      document.body.classList.add('pointer');
+      clearTimeout(pointerTimer);
+      pointerTimer = window.setTimeout(() => document.body.classList.remove('pointer'), 2000);
+    }
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (!started) {
+      if (e.code === 'Enter' || e.code === 'Space') start();
+      return;
+    }
+    if (e.repeat) return;
+    switch (e.code) {
+      case 'KeyV':
+        viewing ? exitView() : enterView();
+        return;
+      case 'Escape':
+        if (viewing) exitView();
+        return;
+      case 'KeyC':
+        if (viewing) {
+          motion = motion === 'still' ? 'pan' : 'still';
+          viewBaseYaw = player.yaw;
+          viewClock = 0;
+          toast(MOTION_LABEL[motion]);
+        } else {
+          player.setView(player.view === 'first' ? 'third' : 'first');
+          toast(player.view === 'first' ? '一人称視点' : '三人称視点');
+        }
+        return;
+      case 'KeyF':
+        toggleFullscreen();
+        return;
+      case 'KeyT':
+        speedIndex = (speedIndex + 1) % TIME_SPEEDS.length;
+        toast(TIME_SPEEDS[speedIndex].label);
+        return;
+      case 'KeyH':
+        help.classList.toggle('off');
+        return;
+    }
+    if (!viewing) player.keyDown(e.code);
+  });
+  window.addEventListener('keyup', (e) => player.keyUp(e.code));
+  window.addEventListener('blur', () => player.releaseKeys());
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  const save = () =>
+    writeSave({ x: player.position.x, z: player.position.z, yaw: player.yaw, pitch: player.pitch, hour, view: player.view, speed: speedIndex });
+  setInterval(() => started && save(), 5000);
+  window.addEventListener('beforeunload', () => started && save());
+
+  // ?frames=N stops drawing after N frames (used for automated screenshots).
+  const frameLimit = Number(new URLSearchParams(location.search).get('frames')) || Infinity;
+  let frames = 0;
+  const timer = new THREE.Timer();
+  timer.connect(document);
+  let elapsed = 0;
+  let sinceFrame = 0;
+
+  renderer.setAnimationLoop(() => {
+    timer.update();
+    const raw = timer.getDelta();
+    // In view mode draw at about 30 fps so a TV can run for hours without the PC working hard.
+    sinceFrame += raw;
+    if (viewing && sinceFrame < 1 / 31) return;
+    const dt = Math.min(0.1, sinceFrame);
+    sinceFrame = 0;
+    elapsed += dt;
+
+    hour = (hour + dt * TIME_SPEEDS[speedIndex].hoursPerSecond) % 24;
+    windUniforms.uTime.value = elapsed;
+    windUniforms.uWind.value = 0.5 + 0.35 * Math.sin(elapsed * 0.13) * Math.sin(elapsed * 0.071);
+
+    player.update(dt, started && !viewing && document.pointerLockElement === canvas);
+    if (viewing) {
+      viewClock += dt;
+      if (motion === 'pan') player.yaw = viewBaseYaw + Math.sin(viewClock * ((Math.PI * 2) / 140)) * 0.5;
+    }
+    player.applyCamera(camera);
+
+    const day = sky.update(hour, player.position);
+    stream.update(dt);
+    fireflies.update(elapsed, day.night);
+    for (const g of veg.cullGroups) updateDistanceCulling(g, camera.position);
+    sound.update(dt, camera, day.daylight, day.night, hour);
+
+    renderer.render(scene, camera);
+    if (++frames >= frameLimit) {
+      renderer.setAnimationLoop(null);
+      document.title = 'Natural (stopped)';
+    }
+  });
+}
+
+main().catch((err) => {
+  console.error(err);
+  $('loading').textContent = 'この環境では森を表示できませんでした（WebGL が使えるブラウザでお試しください）';
+});
