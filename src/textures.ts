@@ -102,42 +102,91 @@ export function glowTexture() {
 }
 
 // Leaf sprays with transparent gaps, used on the cards that make up tree crowns.
-export function foliageTexture(kind: 'leaf' | 'needle', seed: number) {
-  const size = 256;
+export function foliageTexture(kind: 'leaf' | 'needle' | 'maple', seed: number) {
+  const size = 512;
   const rnd = mulberry32(seed);
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
-  const cx = size / 2;
-  const cy = size / 2;
+  const S = size / 256; // drawing below is in 256-unit space
+  ctx.scale(S, S);
+  const half = 128;
   if (kind === 'leaf') {
-    // A few twigs, each carrying oval leaves.
-    for (let b = 0; b < 7; b++) {
+    // Twigs carrying oval leaves, each with a lit side, a shaded side and a midrib.
+    for (let b = 0; b < 8; b++) {
       const a = rnd() * Math.PI * 2;
-      const len = size * (0.25 + rnd() * 0.2);
-      ctx.strokeStyle = 'rgb(70,55,35)';
-      ctx.lineWidth = 2;
+      const len = 256 * (0.25 + rnd() * 0.2);
+      ctx.strokeStyle = 'rgb(80,62,40)';
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len);
+      ctx.moveTo(half, half);
+      ctx.lineTo(half + Math.cos(a) * len, half + Math.sin(a) * len);
       ctx.stroke();
-      for (let i = 0; i < 16; i++) {
-        const t = 0.15 + rnd() * 0.85;
-        const px = cx + Math.cos(a) * len * t + (rnd() - 0.5) * 30;
-        const py = cy + Math.sin(a) * len * t + (rnd() - 0.5) * 30;
-        const l = 55 + rnd() * 45;
-        const g = 110 + rnd() * 70;
-        ctx.fillStyle = `rgb(${l * 0.8},${g},${l * 0.35})`;
+      for (let i = 0; i < 18; i++) {
+        const t = 0.12 + rnd() * 0.88;
+        const px = half + Math.cos(a) * len * t + (rnd() - 0.5) * 28;
+        const py = half + Math.sin(a) * len * t + (rnd() - 0.5) * 28;
+        const light = rnd();
+        const r = 60 + light * 55;
+        const g = 105 + light * 80;
+        const bl = 30 + light * 30;
+        const lw = 12 + rnd() * 6;
+        const lh = 5.5 + rnd() * 2.5;
         ctx.save();
         ctx.translate(px, py);
         ctx.rotate(a + (rnd() - 0.5) * 1.8);
+        const grad = ctx.createLinearGradient(0, -lh, 0, lh);
+        grad.addColorStop(0, `rgb(${r * 1.15},${g * 1.12},${bl * 1.1})`);
+        grad.addColorStop(1, `rgb(${r * 0.7},${g * 0.72},${bl * 0.7})`);
+        ctx.fillStyle = grad;
         ctx.beginPath();
-        ctx.ellipse(0, 0, 13 + rnd() * 6, 6 + rnd() * 3, 0, 0, Math.PI * 2);
+        ctx.moveTo(-lw, 0);
+        ctx.quadraticCurveTo(-lw * 0.2, -lh * 1.6, lw, 0);
+        ctx.quadraticCurveTo(-lw * 0.2, lh * 1.6, -lw, 0);
         ctx.fill();
-        ctx.fillStyle = 'rgba(255,255,220,0.12)';
+        ctx.strokeStyle = `rgba(230,240,190,0.35)`;
+        ctx.lineWidth = 0.6;
         ctx.beginPath();
-        ctx.ellipse(-3, -2, 7, 2.5, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.moveTo(-lw * 0.9, 0);
+        ctx.lineTo(lw * 0.9, 0);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  } else if (kind === 'maple') {
+    // Palmate five-lobed leaves on long stalks, like a Japanese maple in summer.
+    const lobe = (r: number) => {
+      ctx.beginPath();
+      for (let k = 0; k <= 10; k++) {
+        const ang = -Math.PI / 2 + ((k / 10) * Math.PI * 2 * 5) / 5;
+        const rr = k % 2 === 0 ? r : r * 0.38;
+        const x = Math.cos(ang - Math.PI * 0.1) * rr;
+        const y = Math.sin(ang - Math.PI * 0.1) * rr;
+        if (k === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fill();
+    };
+    for (let b = 0; b < 7; b++) {
+      const a = rnd() * Math.PI * 2;
+      const len = 256 * (0.22 + rnd() * 0.2);
+      ctx.strokeStyle = 'rgb(110,70,50)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(half, half);
+      ctx.lineTo(half + Math.cos(a) * len, half + Math.sin(a) * len);
+      ctx.stroke();
+      for (let i = 0; i < 12; i++) {
+        const t = 0.2 + rnd() * 0.8;
+        const px = half + Math.cos(a) * len * t + (rnd() - 0.5) * 30;
+        const py = half + Math.sin(a) * len * t + (rnd() - 0.5) * 30;
+        const light = rnd();
+        ctx.fillStyle = `rgb(${70 + light * 60},${120 + light * 70},${35 + light * 25})`;
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(a + Math.PI / 2 + (rnd() - 0.5) * 1.2);
+        lobe(9 + rnd() * 4);
         ctx.restore();
       }
     }
@@ -145,11 +194,11 @@ export function foliageTexture(kind: 'leaf' | 'needle', seed: number) {
     // Cedar sprays: dense short strokes along forking stems.
     for (let b = 0; b < 9; b++) {
       const a = rnd() * Math.PI * 2;
-      const len = size * (0.28 + rnd() * 0.18);
+      const len = 256 * (0.28 + rnd() * 0.18);
       for (let i = 0; i < 140; i++) {
         const t = rnd();
-        const px = cx + Math.cos(a) * len * t + (rnd() - 0.5) * 16 * (1 - t * 0.5);
-        const py = cy + Math.sin(a) * len * t + (rnd() - 0.5) * 16 * (1 - t * 0.5);
+        const px = half + Math.cos(a) * len * t + (rnd() - 0.5) * 16 * (1 - t * 0.5);
+        const py = half + Math.sin(a) * len * t + (rnd() - 0.5) * 16 * (1 - t * 0.5);
         const ang = a + (rnd() - 0.5) * 2.2;
         const l = 6 + rnd() * 8;
         const g = 70 + rnd() * 60;
@@ -168,15 +217,18 @@ export function foliageTexture(kind: 'leaf' | 'needle', seed: number) {
   return tex;
 }
 
-// Four wildflowers in one texture, one per quarter:
-// white fleabane, yellow buttercup, purple bellflower, blue dayflower.
-export type FlowerKind = 0 | 1 | 2 | 3;
+// Eight wild plants in one texture, four per row:
+// top row: white fleabane, yellow buttercup, purple bellflower, blue dayflower;
+// bottom row: pink fringed pink (nadeshiko), yellow patrinia (ominaeshi),
+// silver grass (susuki), white clover.
+export type FlowerKind = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export const FLOWER_KINDS = 8;
 export function flowerAtlas() {
-  const size = 512;
-  const q = size / 2;
+  const q = 256;
   const rnd = mulberry32(21);
   const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
+  canvas.width = q * 4;
+  canvas.height = q * 2;
   const ctx = canvas.getContext('2d')!;
   const stem = (x: number, y0: number, y1: number, bend: number) => {
     ctx.strokeStyle = 'rgb(70,110,45)';
@@ -200,8 +252,8 @@ export function flowerAtlas() {
     return [x + bend * 0.6, y1] as const;
   };
   for (let k = 0; k < 4; k++) {
-    const ox = (k % 2) * q;
-    const oy = Math.floor(k / 2) * q;
+    const ox = k * q;
+    const oy = 0;
     const n = k === 2 ? 4 : 6;
     for (let i = 0; i < n; i++) {
       const x = ox + q * (0.15 + 0.7 * (i + rnd() * 0.6) / n);
@@ -262,6 +314,111 @@ export function flowerAtlas() {
         ctx.fillRect(-1, 2, 2, 5);
       }
       ctx.restore();
+    }
+  }
+
+  // Nadeshiko: five pink petals with finely fringed edges.
+  for (let i = 0; i < 5; i++) {
+    const x = q * (0.15 + 0.7 * (i + rnd() * 0.6) / 5);
+    const [hx, hy] = stem(x, q * 2 - 2, q + q * (0.2 + rnd() * 0.3), (rnd() - 0.5) * 20);
+    ctx.save();
+    ctx.translate(hx, hy);
+    ctx.rotate(rnd());
+    for (let p = 0; p < 5; p++) {
+      ctx.save();
+      ctx.rotate((p / 5) * Math.PI * 2);
+      ctx.fillStyle = 'rgb(236,150,190)';
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-4, 8);
+      for (let f = 0; f <= 6; f++) ctx.lineTo(-4 + (f / 6) * 8, f % 2 ? 11 : 15);
+      ctx.lineTo(4, 8);
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.fillStyle = 'rgb(200,90,130)';
+    ctx.beginPath();
+    ctx.arc(0, 0, 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Ominaeshi: tall stems topped with flat sprays of tiny yellow flowers.
+  for (let i = 0; i < 4; i++) {
+    const x = q + q * (0.15 + 0.7 * (i + rnd() * 0.6) / 4);
+    const [hx, hy] = stem(x, q * 2 - 2, q + q * (0.1 + rnd() * 0.15), (rnd() - 0.5) * 16);
+    ctx.fillStyle = 'rgb(240,210,50)';
+    for (let d = 0; d < 60; d++) {
+      const a = rnd() * Math.PI * 2;
+      const r = Math.sqrt(rnd()) * 16;
+      ctx.beginPath();
+      ctx.arc(hx + Math.cos(a) * r, hy + Math.sin(a) * r * 0.35, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Susuki: arching leaves and silky plumes bending with the wind.
+  {
+    const ox = q * 2;
+    ctx.strokeStyle = 'rgb(110,130,70)';
+    ctx.lineWidth = 2.2;
+    for (let i = 0; i < 14; i++) {
+      const x = ox + q * 0.5 + (rnd() - 0.5) * 30;
+      const lean = (rnd() - 0.5) * 220;
+      ctx.beginPath();
+      ctx.moveTo(x, q * 2);
+      ctx.quadraticCurveTo(x + lean * 0.2, q * 1.3, x + lean * 0.5, q * 1.2 + rnd() * 90);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 5; i++) {
+      const x = ox + q * 0.5 + (i - 2) * 12 + (rnd() - 0.5) * 8;
+      const tx = x + 30 + rnd() * 30;
+      const ty = q + 20 + rnd() * 40;
+      ctx.strokeStyle = 'rgb(150,140,100)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x, q * 2);
+      ctx.quadraticCurveTo(x, ty + 60, tx, ty);
+      ctx.stroke();
+      // plume: many fine hairs sweeping down to one side
+      for (let h = 0; h < 40; h++) {
+        const t2 = rnd();
+        const sx = tx - 10 * t2;
+        const sy = ty + t2 * 50;
+        ctx.strokeStyle = `rgba(${225 + rnd() * 20},${210 + rnd() * 20},${180 + rnd() * 20},0.9)`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.quadraticCurveTo(sx + 10, sy + 6, sx + 14 + rnd() * 10, sy + 14 + rnd() * 10);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // White clover: low round heads and three-part leaves.
+  {
+    const ox = q * 3;
+    for (let i = 0; i < 12; i++) {
+      const x = ox + 20 + rnd() * (q - 40);
+      const y = q * 2 - 10 - rnd() * 40;
+      ctx.fillStyle = 'rgb(70,120,50)';
+      for (let l = 0; l < 3; l++) {
+        ctx.beginPath();
+        ctx.arc(x + Math.cos(l * 2.1) * 5, y + Math.sin(l * 2.1) * 5, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    for (let i = 0; i < 6; i++) {
+      const x = ox + 30 + rnd() * (q - 60);
+      const [hx, hy] = stem(x, q * 2 - 2, q * 2 - 70 - rnd() * 50, (rnd() - 0.5) * 10);
+      for (let d = 0; d < 36; d++) {
+        const a = rnd() * Math.PI * 2;
+        const r = Math.sqrt(rnd()) * 9;
+        ctx.fillStyle = rnd() < 0.2 ? 'rgb(235,200,210)' : 'rgb(250,248,240)';
+        ctx.beginPath();
+        ctx.ellipse(hx + Math.cos(a) * r, hy + Math.sin(a) * r, 1.6, 2.6, a, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
   }
   const tex = new THREE.CanvasTexture(canvas);

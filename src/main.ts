@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createTerrain } from './terrain';
 import { createVegetation, updateDistanceCulling, windUniforms } from './vegetation';
-import { createStream, createFireflies } from './water';
+import { createStream, createFireflies, NO_REFLECT_LAYER } from './water';
 import { createSky } from './sky';
 import { Player, type ViewMode } from './player';
 import { Soundscape } from './audio';
@@ -68,6 +68,9 @@ async function main() {
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 5000);
+  camera.layers.enable(NO_REFLECT_LAYER);
+  // Shadows are drawn once per frame, not again for the water reflection.
+  renderer.shadowMap.autoUpdate = false;
 
   // Let the loading text paint before the heavy world build.
   await new Promise((r) => setTimeout(r, 30));
@@ -98,6 +101,7 @@ async function main() {
   sky.update(hour, player.position);
   player.applyCamera(camera);
   renderer.compile(scene, camera);
+  renderer.shadowMap.needsUpdate = true;
   renderer.render(scene, camera);
 
   $('loading').hidden = true;
@@ -271,11 +275,16 @@ async function main() {
     player.applyCamera(camera);
 
     const day = sky.update(hour, player.position);
-    stream.update(dt);
+    stream.update(elapsed, day.sunDir, day.sunColor, day.sunIntensity, day.daylight);
     fireflies.update(elapsed, day.night);
     for (const g of veg.cullGroups) updateDistanceCulling(g, camera.position);
     sound.update(dt, camera, day.daylight, day.night, hour);
 
+    camera.updateMatrixWorld();
+    windUniforms.uSunView.value.copy(day.sunDir).transformDirection(camera.matrixWorldInverse);
+    windUniforms.uSunColor.value.copy(day.sunColor).multiplyScalar(day.sunIntensity * 0.35);
+    stream.renderReflection(renderer, scene, camera);
+    renderer.shadowMap.needsUpdate = true;
     renderer.render(scene, camera);
     if (++frames >= frameLimit) {
       renderer.setAnimationLoop(null);

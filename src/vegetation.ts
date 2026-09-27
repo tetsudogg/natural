@@ -5,9 +5,16 @@ import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferG
 import { HALF, clearingFactor, forestDensity, streamDist, streamX, WATERFALL_Z } from './world';
 import { groundHeight, groundSlope } from './terrain';
 import { fbm, mulberry32 } from './noise';
-import { barkTexture, fernTexture, flowerAtlas, foliageTexture, rockTexture, type FlowerKind } from './textures';
+import { NO_REFLECT_LAYER } from './water';
+import { barkTexture, fernTexture, flowerAtlas, foliageTexture, rockTexture, FLOWER_KINDS, type FlowerKind } from './textures';
 
-export const windUniforms = { uTime: { value: 0 }, uWind: { value: 0.5 } };
+export const windUniforms = {
+  uTime: { value: 0 },
+  uWind: { value: 0.5 },
+  // Sun direction in view space and its colour, for light shining through leaves.
+  uSunView: { value: new THREE.Vector3(0, 1, 0) },
+  uSunColor: { value: new THREE.Color(1, 1, 1) },
+};
 
 // Colours are written as they look on screen (sRGB) and converted for lighting.
 export const srgb = (r: number, g: number, b: number) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace);
@@ -35,7 +42,21 @@ function addWind(mat: THREE.Material, amount: number, stiffness: number, foliage
         }`,
       );
     if (foliage) {
-      shader.fragmentShader = shader.fragmentShader.replace('float faceDirection = gl_FrontFacing ? 1.0 : - 1.0;', 'float faceDirection = 1.0;');
+      shader.uniforms.uSunView = windUniforms.uSunView;
+      shader.uniforms.uSunColor = windUniforms.uSunColor;
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform vec3 uSunView;\nuniform vec3 uSunColor;')
+        .replace('float faceDirection = gl_FrontFacing ? 1.0 : - 1.0;', 'float faceDirection = 1.0;')
+        .replace(
+          '#include <lights_fragment_end>',
+          `#include <lights_fragment_end>
+          {
+            // Leaves glow when the sun is behind them.
+            vec3 toFrag = normalize(-vViewPosition);
+            float back = pow(max(dot(toFrag, uSunView), 0.0), 4.0);
+            reflectedLight.directDiffuse += diffuseColor.rgb * uSunColor * (back * 0.9 + 0.12);
+          }`,
+        );
     }
   };
   mat.customProgramCacheKey = () => `wind-${amount}-${stiffness}-${foliage}`;
@@ -128,36 +149,62 @@ function cedarGeometry(seed: number): TreeParts {
   return { wood: colored(trunk, CEDAR_BARK), leaves: mergeGeometries(cards)! };
 }
 
-// Broadleaf tree (oak, maple): forked trunk and a rounded crown of leaf clusters.
+// A tapered limb from a to b.
+function limb(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number) {
+  const dir = new THREE.Vector3().subVectors(b, a);
+  const len = dir.length();
+  const g = new THREE.CylinderGeometry(r1, r0, len, 6, 1);
+  g.translate(0, len / 2, 0);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize()));
+  g.translate(a.x, a.y, a.z);
+  return colored(g, BARK);
+}
+
+// Broadleaf tree (oak, beech, maple): a trunk that forks into limbs, each limb carrying
+// a few rounded clumps of leaves. Gaps between clumps let light and sky through.
 function broadleafGeometry(seed: number): TreeParts {
   const rnd = mulberry32(seed);
   const wood: THREE.BufferGeometry[] = [];
-  const trunkH = 5 + rnd() * 1.5;
-  const trunk = new THREE.CylinderGeometry(0.2, 0.38, trunkH, 12);
+  const trunkH = 4.5 + rnd() * 1.5;
+  const trunk = new THREE.CylinderGeometry(0.22, 0.4, trunkH, 12);
   trunk.translate(0, trunkH / 2, 0);
   wood.push(colored(trunk, BARK));
-  for (let i = 0; i < 4; i++) {
-    const b = new THREE.CylinderGeometry(0.06, 0.15, 3.8, 5);
-    b.translate(0, 1.9, 0);
-    b.rotateZ(0.55 + rnd() * 0.35);
-    b.rotateY((i / 4) * Math.PI * 2 + rnd());
-    b.translate(0, trunkH - 0.8, 0);
-    wood.push(colored(b, BARK));
+  const fork = new THREE.Vector3(0, trunkH, 0);
+  const center = new THREE.Vector3(0, trunkH + 3, 0);
+  const radius = new THREE.Vector3(3.8 + rnd(), 3, 3.8 + rnd());
+
+  // Main limbs spread out and up from the fork.
+  const tips: THREE.Vector3[] = [];
+  const limbs = 3 + Math.floor(rnd() * 2);
+  for (let i = 0; i < limbs; i++) {
+    const a = (i / limbs) * Math.PI * 2 + rnd() * 0.8;
+    const tip = new THREE.Vector3(Math.cos(a) * radius.x * 0.45, trunkH + 1.6 + rnd() * 1.2, Math.sin(a) * radius.z * 0.45);
+    wood.push(limb(fork, tip, 0.17, 0.09));
+    tips.push(tip);
   }
-  const center = new THREE.Vector3(0, trunkH + 2.6, 0);
-  const radius = new THREE.Vector3(3.6 + rnd(), 2.8, 3.6 + rnd());
+  const lead = new THREE.Vector3((rnd() - 0.5) * 0.6, trunkH + 3.4, (rnd() - 0.5) * 0.6);
+  wood.push(limb(fork, lead, 0.15, 0.07));
+  tips.push(lead);
+
   const cards: THREE.BufferGeometry[] = [];
-  const count = 110;
   const hue = rnd();
-  for (let i = 0; i < count; i++) {
-    // Mostly near the crown's surface, some inside to fill it.
-    const dir = new THREE.Vector3(rnd() * 2 - 1, rnd() * 2 - 1, rnd() * 2 - 1).normalize();
-    const r = 0.35 + 0.65 * Math.sqrt(rnd());
-    const pos = dir.clone().multiply(radius).multiplyScalar(r).add(center);
-    pos.y += Math.sin(dir.x * 3 + dir.z * 2) * 0.4;
-    const rot = new THREE.Euler(rnd() * Math.PI, rnd() * Math.PI, rnd() * Math.PI);
-    const tint = srgb(0.8 + hue * 0.15 + rnd() * 0.1, 0.9 + rnd() * 0.1, 0.72 + rnd() * 0.12);
-    cards.push(card(2.4 + rnd() * 1.1, pos, rot, center, radius, tint));
+  const clumps = 12;
+  for (let c = 0; c < clumps; c++) {
+    const dir = new THREE.Vector3(rnd() * 2 - 1, rnd() * 1.6 - 0.5, rnd() * 2 - 1).normalize();
+    const cc = dir.clone().multiply(radius).multiplyScalar(0.55 + rnd() * 0.3).add(center);
+    // A branch from the nearest limb tip to this clump.
+    let near = tips[0];
+    for (const t of tips) if (t.distanceToSquared(cc) < near.distanceToSquared(cc)) near = t;
+    wood.push(limb(near, cc, 0.07, 0.025));
+    const clumpR = 1.1 + rnd() * 0.5;
+    const shade = 0.9 + rnd() * 0.2;
+    for (let i = 0; i < 10; i++) {
+      const off = new THREE.Vector3(rnd() * 2 - 1, (rnd() * 2 - 1) * 0.7, rnd() * 2 - 1).normalize().multiplyScalar(clumpR * Math.sqrt(rnd()));
+      const pos = cc.clone().add(off);
+      const rot = new THREE.Euler(rnd() * Math.PI, rnd() * Math.PI, rnd() * Math.PI);
+      const tint = srgb((0.8 + hue * 0.15 + rnd() * 0.1) * shade, (0.9 + rnd() * 0.1) * shade, (0.72 + rnd() * 0.12) * shade);
+      cards.push(card(1.7 + rnd() * 0.8, pos, rot, center, radius, tint));
+    }
   }
   return { wood: mergeGeometries(wood)!, leaves: mergeGeometries(cards)! };
 }
@@ -176,31 +223,45 @@ function bushGeometry(): THREE.BufferGeometry {
   return mergeGeometries(cards)!;
 }
 
-// A clump of tapered blades; bases are dark, tips are light.
+// A clump of curved, tapered blades. Bases are dark, tips are light, and each blade
+// has its own tint so a meadow reads as many plants rather than one colour.
 function grassClumpGeometry() {
   const rnd = mulberry32(8);
   const verts: number[] = [];
   const cols: number[] = [];
   const idx: number[] = [];
-  const blades = 5;
+  const blades = 8;
+  const segs = 4;
   for (let b = 0; b < blades; b++) {
     const a = rnd() * Math.PI * 2;
-    const ox = (rnd() - 0.5) * 0.25;
-    const oz = (rnd() - 0.5) * 0.25;
-    const h = 0.7 + rnd() * 0.5;
-    const lean = 0.1 + rnd() * 0.2;
-    const w = 0.035 + rnd() * 0.02;
+    const ox = (rnd() - 0.5) * 0.3;
+    const oz = (rnd() - 0.5) * 0.3;
+    const h = 0.55 + rnd() * 0.6;
+    const lean = 0.15 + rnd() * 0.35;
+    const w = 0.025 + rnd() * 0.02;
     const c = Math.cos(a);
     const s = Math.sin(a);
-    const pts = [
-      [-w, 0, 0], [w, 0, 0],
-      [-w * 0.6, h * 0.5, lean * 0.4], [w * 0.6, h * 0.5, lean * 0.4],
-      [0, h, lean],
-    ];
+    const tint = [0.9 + rnd() * 0.25, 0.9 + rnd() * 0.15, 0.8 + rnd() * 0.2];
+    if (rnd() < 0.15) tint[0] += 0.35; // an occasional dry, yellowed blade
     const base = verts.length / 3;
-    for (const [x, y, z] of pts) verts.push(ox + x * c + z * s, y, oz - x * s + z * c);
-    [0.3, 0.3, 0.6, 0.6, 0.9].forEach((v) => cols.push(v, v, v));
-    idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3, base + 2, base + 3, base + 4);
+    for (let k = 0; k <= segs; k++) {
+      const t = k / segs;
+      const y = h * t;
+      const z = lean * t * t; // curves over toward the tip
+      const hw = k === segs ? 0 : w * (1 - t * 0.8);
+      for (const side of k === segs ? [0] : [-1, 1]) {
+        const x = side * hw;
+        verts.push(ox + x * c + z * s, y - lean * t * t * 0.3, oz - x * s + z * c);
+        const v = 0.28 + 0.72 * t;
+        cols.push(v * tint[0], v * tint[1], v * tint[2]);
+      }
+    }
+    for (let k = 0; k < segs - 1; k++) {
+      const i0 = base + k * 2;
+      idx.push(i0, i0 + 1, i0 + 2, i0 + 2, i0 + 1, i0 + 3);
+    }
+    const last = base + (segs - 1) * 2;
+    idx.push(last, last + 1, last + 2);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
@@ -258,15 +319,15 @@ function rockGeometry(seed: number, mossy: boolean) {
 
 // Wildflowers: two crossed cards showing one quarter of the flower atlas.
 function flowerGeometry(kind: FlowerKind) {
-  const u0 = (kind % 2) * 0.5;
-  const v0 = kind < 2 ? 0.5 : 0; // canvas row 0 is the top of the texture
+  const u0 = (kind % 4) * 0.25;
+  const v0 = kind < 4 ? 0.5 : 0; // canvas row 0 is the top of the texture
   const parts: THREE.BufferGeometry[] = [];
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 3; i++) {
     const g = new THREE.PlaneGeometry(0.6, 0.6);
     g.translate(0, 0.3, 0);
-    g.rotateY((i * Math.PI) / 2);
+    g.rotateY((i * Math.PI) / 3);
     const uv = g.attributes.uv as THREE.BufferAttribute;
-    for (let k = 0; k < uv.count; k++) uv.setXY(k, u0 + uv.getX(k) * 0.5, v0 + uv.getY(k) * 0.5);
+    for (let k = 0; k < uv.count; k++) uv.setXY(k, u0 + uv.getX(k) * 0.25, v0 + uv.getY(k) * 0.5);
     const n = g.attributes.normal as THREE.BufferAttribute;
     for (let k = 0; k < n.count; k++) n.setXYZ(k, 0, 1, 0);
     parts.push(g);
@@ -404,7 +465,7 @@ export function createVegetation() {
   bark.repeat.set(2, 5);
   const woodMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: bark, roughness: 0.95 });
   addWind(woodMat, 0.0005, 2);
-  const leafMat = (kind: 'leaf' | 'needle', seed: number, sway = 0.0005, stiffness = 2) => {
+  const leafMat = (kind: 'leaf' | 'needle' | 'maple', seed: number, sway = 0.0005, stiffness = 2) => {
     const m = new THREE.MeshStandardMaterial({
       map: foliageTexture(kind, seed),
       vertexColors: true,
@@ -417,12 +478,13 @@ export function createVegetation() {
   };
   const needleMat = leafMat('needle', 31);
   const broadMat = leafMat('leaf', 32);
+  const mapleMat = leafMat('maple', 34);
   const addTree = (parts: TreeParts, leaves: THREE.Material, list: Placement[]) => {
     group.add(chunked(parts.wood, woodMat, list, 60, { shadow: true, maxDist: 420 }));
     group.add(chunked(parts.leaves, leaves, list, 60, { shadow: true }));
   };
   addTree(cedarGeometry(21), needleMat, cedars);
-  broad.forEach((list, i) => addTree(broadleafGeometry(7 + i), broadMat, list));
+  broad.forEach((list, i) => addTree(broadleafGeometry(7 + i), i === 2 ? mapleMat : broadMat, list));
   const bushMat = leafMat('leaf', 33, 0.06, 1.5);
   const bushGroup = chunked(bushGeometry(), bushMat, bushes, 50, { shadow: true, maxDist: 200 });
   group.add(bushGroup);
@@ -488,19 +550,23 @@ export function createVegetation() {
   group.add(...rockGroups);
 
   // Wildflowers grow in drifts on open ground; each kind prefers its own patches.
-  const flowers: Placement[][] = [[], [], [], []];
-  for (let i = 0; i < 420000; i++) {
+  // Size, how many, and where differ by kind (silver grass is tall; clover is low and common).
+  const kindScale = [1, 1, 1.1, 0.8, 1, 1.6, 2.6, 0.55];
+  const kindWeight = [1, 1, 0.8, 0.8, 0.7, 0.6, 0.45, 1.3];
+  const flowers: Placement[][] = Array.from({ length: FLOWER_KINDS }, () => []);
+  for (let i = 0; i < 520000; i++) {
     const x = (rnd() * 2 - 1) * (HALF - 3);
     const z = (rnd() * 2 - 1) * (HALF - 3);
     const d = streamDist(x, z);
-    if (d < 4.5 || d > 110) continue;
-    const kind = Math.floor(rnd() * 4) as FlowerKind;
+    if (d < 4.5 || d > 120) continue;
+    const kind = Math.floor(rnd() * FLOWER_KINDS) as FlowerKind;
     const patch = fbm(x * 0.035 + kind * 31, z * 0.035 - kind * 17, 2);
     const open = 1 - forestDensity(x, z);
     const wetLover = kind === 3 ? 1 - THREE.MathUtils.smoothstep(d, 6, 25) : 1; // dayflowers near water
-    if (rnd() > THREE.MathUtils.smoothstep(patch, 0.48, 0.62) * open * wetLover + clearingFactor(x, z) * 0.08) continue;
+    const chance = THREE.MathUtils.smoothstep(patch, 0.48, 0.62) * open * wetLover * kindWeight[kind];
+    if (rnd() > chance + clearingFactor(x, z) * 0.06) continue;
     if (groundSlope(x, z) > 0.55) continue;
-    const s = 0.9 + rnd() * 0.6;
+    const s = kindScale[kind] * (0.85 + rnd() * 0.4);
     const m = new THREE.Matrix4().compose(
       new THREE.Vector3(x, groundHeight(x, z) - 0.03, z),
       new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6.28),
@@ -533,6 +599,9 @@ export function createVegetation() {
   addWind(fernMat, 0.08, 1.5, true);
   const fernGroup = chunked(fernGeometry(), fernMat, ferns, 30, { maxDist: 85, shadow: false });
   group.add(fernGroup);
+
+  // Small plants are left out of the water reflection.
+  for (const g of [grassGroup, bushGroup, fernGroup, ...flowerGroups]) g.traverse((o) => o.layers.set(NO_REFLECT_LAYER));
 
   return { group, cullGroups: [grassGroup, bushGroup, fernGroup, ...rockGroups, ...flowerGroups], treeSpots };
 }

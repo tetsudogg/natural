@@ -10,6 +10,8 @@ export interface DayState {
   daylight: number; // 0 at night, 1 in full day
   night: number; // 0 in the day, 1 in deep night
   hour: number;
+  sunColor: THREE.Color;
+  sunIntensity: number;
 }
 
 const NIGHT_FOG = new THREE.Color().setRGB(0.018, 0.024, 0.04, THREE.SRGBColorSpace);
@@ -71,6 +73,7 @@ export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
   sc.far = 400;
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.05;
+  sun.shadow.camera.layers.enableAll(); // small plants live on their own layer
   scene.add(sun, sun.target);
 
   const moon = new THREE.DirectionalLight(0x8ea6d8, 0);
@@ -87,7 +90,7 @@ export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
 
   scene.fog = new THREE.FogExp2(DAY_FOG.getHex(), 0.003);
 
-  const state: DayState = { sunDir: new THREE.Vector3(), daylight: 1, night: 0, hour: 12 };
+  const state: DayState = { sunDir: new THREE.Vector3(), daylight: 1, night: 0, hour: 12, sunColor: new THREE.Color(), sunIntensity: 0 };
   const tmp = new THREE.Color();
 
   function update(hour: number, focus: THREE.Vector3) {
@@ -112,6 +115,8 @@ export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
     sun.position.copy(focus).addScaledVector(state.sunDir, 200);
     sun.target.position.copy(focus);
     sun.castShadow = sun.intensity > 0.05;
+    state.sunColor.copy(sun.color);
+    state.sunIntensity = sun.intensity;
 
     moon.intensity = 0.7 * state.night;
     moon.position.copy(focus).addScaledVector(state.sunDir, -200).add(new THREE.Vector3(0, 80, 0));
