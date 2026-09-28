@@ -6,7 +6,7 @@ import { HALF, clearingFactor, forestDensity, streamDist, streamX, WATERFALL_Z }
 import { groundHeight, groundSlope } from './terrain';
 import { fbm, mulberry32 } from './noise';
 import { NO_REFLECT_LAYER } from './water';
-import { barkTexture, fernTexture, flowerAtlas, foliageTexture, rockTexture, FLOWER_KINDS, type FlowerKind } from './textures';
+import { fernTexture, flowerAtlas, foliageTexture, surface, FLOWER_KINDS, type FlowerKind } from './textures';
 
 export const windUniforms = {
   uTime: { value: 0 },
@@ -93,7 +93,7 @@ function colored(geo: THREE.BufferGeometry, color: THREE.Color, jitter = 0, seed
   return g;
 }
 
-const BARK = srgb(0.7, 0.68, 0.62);
+const BARK = srgb(0.86, 0.85, 0.8);
 const TRUNK_MOSS = srgb(0.3, 0.46, 0.12);
 const CEDAR_BARK = srgb(0.66, 0.46, 0.34);
 
@@ -297,8 +297,70 @@ function grassClumpGeometry() {
   return g;
 }
 
+// Rocks are textured with photos projected from three sides in world space
+// (no stretched seams on the lumpy shapes), stone below and moss where 'moss' says.
+function photoRock(mat: THREE.MeshStandardMaterial) {
+  const rock = surface('rock');
+  const moss = surface('moss');
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, {
+      tRock: { value: rock.map },
+      tRockN: { value: rock.normal },
+      tMoss: { value: moss.map },
+      tMossN: { value: moss.normal },
+    });
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float moss;\nvarying float vMoss;\nvarying vec3 vRockW;\nvarying vec3 vRockN;')
+      .replace(
+        '#include <project_vertex>',
+        `#include <project_vertex>
+        {
+          vec4 rw = vec4(transformed, 1.0);
+          vec3 rn = objectNormal;
+          #ifdef USE_INSTANCING
+            rw = instanceMatrix * rw;
+            rn = mat3(instanceMatrix) * rn;
+          #endif
+          vRockW = (modelMatrix * rw).xyz;
+          vRockN = normalize(mat3(modelMatrix) * rn);
+          vMoss = moss;
+        }`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nuniform sampler2D tRock;\nuniform sampler2D tRockN;\nuniform sampler2D tMoss;\nuniform sampler2D tMossN;\nvarying float vMoss;\nvarying vec3 vRockW;\nvarying vec3 vRockN;',
+      )
+      .replace(
+        '#include <map_fragment>',
+        `vec3 rockWN;
+        {
+          vec3 N = normalize(vRockN);
+          vec3 bw = pow(abs(N), vec3(4.0));
+          bw /= bw.x + bw.y + bw.z;
+          vec3 P = vRockW * 0.45;
+          vec3 stone = texture2D(tRock, P.zy).rgb * bw.x + texture2D(tRock, P.xz).rgb * bw.y + texture2D(tRock, P.xy).rgb * bw.z;
+          vec3 Q = vRockW * 0.6;
+          vec3 green = texture2D(tMoss, Q.zy).rgb * bw.x + texture2D(tMoss, Q.xz).rgb * bw.y + texture2D(tMoss, Q.xy).rgb * bw.z;
+          // Ragged moss edges: the moss photo's own brightness decides where it stops.
+          float m = smoothstep(0.35, 0.6, vMoss + (dot(green, vec3(0.33)) - 0.35) * 0.8);
+          diffuseColor.rgb *= mix(stone, green, m);
+          // Whiteout-blended normal maps, one per projection.
+          vec3 tx = mix(texture2D(tRockN, P.zy).xyz, texture2D(tMossN, Q.zy).xyz, m) * 2.0 - 1.0;
+          vec3 ty = mix(texture2D(tRockN, P.xz).xyz, texture2D(tMossN, Q.xz).xyz, m) * 2.0 - 1.0;
+          vec3 tz = mix(texture2D(tRockN, P.xy).xyz, texture2D(tMossN, Q.xy).xyz, m) * 2.0 - 1.0;
+          tx = vec3(tx.xy + N.zy, abs(tx.z) * N.x);
+          ty = vec3(ty.xy + N.xz, abs(ty.z) * N.y);
+          tz = vec3(tz.xy + N.xy, abs(tz.z) * N.z);
+          rockWN = normalize(tx.zyx * bw.x + ty.xzy * bw.y + tz * bw.z);
+        }`,
+      )
+      .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(rockWN, 0.0)).xyz);');
+  };
+}
+
 // A boulder: a lumpy sphere cut by a few flat fracture planes, with a flat underside.
-// Mossy rocks get green on their upward-facing parts.
+// Mossy rocks get moss on their upward-facing parts ('moss' attribute).
 function rockGeometry(seed: number, mossy: boolean) {
   const rnd = mulberry32(seed);
   const g = new THREE.IcosahedronGeometry(1, 3);
@@ -325,17 +387,14 @@ function rockGeometry(seed: number, mossy: boolean) {
   const nrm = merged.attributes.normal as THREE.BufferAttribute;
   const pos = merged.attributes.position as THREE.BufferAttribute;
   const cols = new Float32Array(count * 3);
-  const stone = srgb(0.62, 0.6, 0.56);
-  const moss = srgb(0.34, 0.52, 0.1);
-  const c = new THREE.Color();
+  const moss = new Float32Array(count);
   for (let i = 0; i < count; i++) {
     const up = nrm.getY(i);
     const ao = 0.7 + 0.3 * THREE.MathUtils.clamp(pos.getY(i) + 0.4, 0, 1);
-    c.copy(stone);
-    if (mossy) c.lerp(moss, THREE.MathUtils.smoothstep(up, -0.1, 0.55) * (0.7 + 0.3 * fbm(pos.getX(i) * 3, pos.getZ(i) * 3, 2)));
-    c.multiplyScalar(ao);
-    cols.set([c.r, c.g, c.b], i * 3);
+    cols.fill(ao, i * 3, i * 3 + 3);
+    moss[i] = mossy ? THREE.MathUtils.smoothstep(up, -0.1, 0.55) * (0.7 + 0.3 * fbm(pos.getX(i) * 3, pos.getZ(i) * 3, 2)) : 0;
   }
+  merged.setAttribute('moss', new THREE.BufferAttribute(moss, 1));
   merged.setAttribute('color', new THREE.BufferAttribute(cols, 3));
   return merged;
 }
@@ -488,9 +547,10 @@ export function createVegetation() {
     }
   }
 
-  const bark = barkTexture();
-  bark.repeat.set(2, 5);
-  const woodMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: bark, roughness: 0.95 });
+  const bark = surface('bark');
+  bark.map.repeat.set(1, 4);
+  bark.normal.repeat.set(1, 4);
+  const woodMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: bark.map, normalMap: bark.normal, roughness: 0.95 });
   addWind(woodMat, 0.0005, 2);
   const leafMat = (kind: 'leaf' | 'needle' | 'maple', seed: number, sway = 0.0005, stiffness = 2) => {
     const m = new THREE.MeshStandardMaterial({
@@ -578,9 +638,8 @@ export function createVegetation() {
     if (streamDist(x, z) < 5 || clearingFactor(x, z) > 0.3) continue;
     addRock(x, z, 0.3 + rnd() * rnd() * 2.5, 0.4);
   }
-  const rockTex = rockTexture();
-  rockTex.repeat.set(2, 2);
-  const rockMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: rockTex, roughness: 0.88 });
+  const rockMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88 });
+  photoRock(rockMat);
   const rockGroups = rocks.map((list, i) => chunked(rockGeometry(40 + (i % 2) * 7, i >= 2), rockMat, list, 60, { shadow: true, maxDist: 260 }));
   group.add(...rockGroups);
 

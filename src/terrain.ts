@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { HALF, forestDensity, heightAt, streamDist } from './world';
 import { fbm, lerp, smoothstep } from './noise';
-import { groundDetailTexture, leafLitterTexture } from './textures';
+import { surface } from './textures';
 
 const srgb = (r: number, g: number, b: number) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace);
 
@@ -57,45 +57,110 @@ function buildGrid(size: number, segs: number, far: boolean) {
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   if (!far) {
-    // How much of the ground is covered by fallen leaves: most of the forest floor,
-    // but not the wet banks or the open meadows.
-    const litter = new Float32Array(pos.count);
+    // The detailed ground is painted with photo textures. Each layer covers the ones
+    // before it: meadow grass, then fallen leaves, moss, stream gravel and bare rock.
+    // 'splat' holds how much of each covering layer shows; the vertex colour becomes a
+    // gentle tint that keeps large areas from looking tiled.
+    const splat = new Float32Array(pos.count * 4);
+    const layer = [0, 0, 0, 0];
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
       const z = pos.getZ(i);
+      const ny = nrm.getY(i);
+      const slope = Math.sqrt(Math.max(0, 1 - ny * ny)) / Math.max(ny, 0.05);
+      const d = streamDist(x, z);
+      const forest = forestDensity(x, z);
       const n = fbm(x * 0.07 - 4, z * 0.07 + 9, 3);
-      litter[i] = smoothstep(0.25, 0.65, forestDensity(x, z)) * smoothstep(6, 11, streamDist(x, z)) * smoothstep(0.25, 0.5, n + 0.1);
+      const m = fbm(x * 0.11 + 17, z * 0.11 - 5, 3);
+      const cover = [
+        smoothstep(0.25, 0.65, forest) * smoothstep(6, 11, d) * smoothstep(0.25, 0.5, n + 0.1),
+        Math.max(smoothstep(0.45, 0.85, forest) * smoothstep(0.5, 0.68, m), (1 - smoothstep(5, 8, d)) * smoothstep(0.45, 0.6, m) * 0.9),
+        1 - smoothstep(3.2, 5.2, d),
+        smoothstep(0.55, 0.95, slope),
+      ];
+      layer.fill(0);
+      for (let k = 0; k < 4; k++) {
+        for (let j = 0; j < k; j++) layer[j] *= 1 - cover[k];
+        layer[k] = cover[k];
+      }
+      splat.set(layer, i * 4);
+      const dry = smoothstep(0.45, 0.75, fbm(x * 0.05 + 3, z * 0.05 - 8, 3));
+      const bright = 0.85 + 0.3 * fbm(x * 0.02 - 11, z * 0.02 + 4, 3);
+      const mud = 1 - 0.3 * (1 - smoothstep(4.5, 7.5, d)) * smoothstep(3.5, 4.5, d);
+      c.setRGB(bright * mud * (1 + dry * 0.12), bright * mud, bright * mud * (1 - dry * 0.15));
+      colors.set([c.r, c.g, c.b], i * 3);
     }
-    geo.setAttribute('litter', new THREE.BufferAttribute(litter, 1));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.setAttribute('splat', new THREE.BufferAttribute(splat, 4));
   }
   return geo;
 }
 
+// Layer textures and how many metres one tile of each covers.
+const LAYERS = [
+  { name: 'grass', size: 3.2 },
+  { name: 'litter', size: 2.4 },
+  { name: 'moss', size: 2.2 },
+  { name: 'gravel', size: 2.6 },
+  { name: 'cliff', size: 9 },
+] as const;
+
 export function createTerrain() {
-  const detail = groundDetailTexture();
-  detail.repeat.set(160, 160);
   const mat = new THREE.MeshStandardMaterial({
     vertexColors: true,
-    map: detail,
     roughness: 0.95,
     metalness: 0,
+    // Any normal map turns on three's tangent-space normal code; the shader below
+    // replaces what it samples with the blend of the layers' normal maps.
+    normalMap: surface('grass').normal,
+    normalScale: new THREE.Vector2(1, 1),
   });
-  const litterTex = leafLitterTexture();
   mat.onBeforeCompile = (shader) => {
-    shader.uniforms.tLitter = { value: litterTex };
+    LAYERS.forEach((l, i) => {
+      shader.uniforms[`tDiff${i}`] = { value: surface(l.name).map };
+      shader.uniforms[`tNor${i}`] = { value: surface(l.name).normal };
+    });
+    const samplers = LAYERS.map((_, i) => `uniform sampler2D tDiff${i};\nuniform sampler2D tNor${i};`).join('\n');
+    const sizes = LAYERS.map((l) => (1 / l.size).toFixed(4));
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float litter;\nvarying float vLitter;\nvarying vec2 vGroundXZ;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLitter = litter;\nvGroundXZ = position.xz;');
+      .replace('#include <common>', '#include <common>\nattribute vec4 splat;\nvarying vec4 vSplat;\nvarying vec2 vGroundXZ;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = splat;\nvGroundXZ = position.xz;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2D tLitter;\nvarying float vLitter;\nvarying vec2 vGroundXZ;')
+      .replace('#include <common>', `#include <common>\n${samplers}\nvarying vec4 vSplat;\nvarying vec2 vGroundXZ;`)
       .replace(
-        '#include <color_fragment>',
-        `#include <color_fragment>
+        '#include <map_fragment>',
+        `vec3 groundN = vec3(0.0);
         {
-          vec3 leaves = texture2D(tLitter, vGroundXZ / 2.2).rgb * 0.8;
-          diffuseColor.rgb = mix(diffuseColor.rgb, leaves, vLitter);
+          // Same orientation as the mesh uv, so three's tangent frame fits these normals.
+          vec2 p = vec2(vGroundXZ.x, -vGroundXZ.y);
+          float w[5];
+          w[1] = vSplat.x; w[2] = vSplat.y; w[3] = vSplat.z; w[4] = vSplat.w;
+          w[0] = max(0.0, 1.0 - w[1] - w[2] - w[3] - w[4]);
+          vec3 col = vec3(0.0);
+          // Grass and leaves cover big areas: mixing in a much larger copy hides the tiling.
+          col += w[0] * mix(texture2D(tDiff0, p * ${sizes[0]}).rgb, texture2D(tDiff0, p * ${sizes[0]} * 0.21).rgb, 0.4);
+          groundN += w[0] * (texture2D(tNor0, p * ${sizes[0]}).xyz * 2.0 - 1.0);
+          if (w[1] > 0.01) {
+            col += w[1] * mix(texture2D(tDiff1, p * ${sizes[1]}).rgb, texture2D(tDiff1, p * ${sizes[1]} * 0.23).rgb, 0.35);
+            groundN += w[1] * (texture2D(tNor1, p * ${sizes[1]}).xyz * 2.0 - 1.0);
+          }
+          if (w[2] > 0.01) {
+            col += w[2] * texture2D(tDiff2, p * ${sizes[2]}).rgb;
+            groundN += w[2] * (texture2D(tNor2, p * ${sizes[2]}).xyz * 2.0 - 1.0);
+          }
+          if (w[3] > 0.01) {
+            col += w[3] * texture2D(tDiff3, p * ${sizes[3]}).rgb;
+            groundN += w[3] * (texture2D(tNor3, p * ${sizes[3]}).xyz * 2.0 - 1.0);
+          }
+          if (w[4] > 0.01) {
+            col += w[4] * texture2D(tDiff4, p * ${sizes[4]}).rgb;
+            groundN += w[4] * (texture2D(tNor4, p * ${sizes[4]}).xyz * 2.0 - 1.0);
+          }
+          diffuseColor.rgb *= col;
+          groundN = normalize(groundN + vec3(0.0, 0.0, 0.05));
         }`,
-      );
+      )
+      .replace('vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;', 'vec3 mapN = groundN;');
   };
   const main = new THREE.Mesh(buildGrid(HALF * 2, 400, false), mat);
   main.receiveShadow = true;
