@@ -88,6 +88,9 @@ function buildGrid(size: number, segs: number, far: boolean) {
       const bright = 0.85 + 0.3 * fbm(x * 0.02 - 11, z * 0.02 + 4, 3);
       const mud = 1 - 0.3 * (1 - smoothstep(4.5, 7.5, d)) * smoothstep(3.5, 4.5, d);
       c.setRGB(bright * mud * (1 + dry * 0.12), bright * mud, bright * mud * (1 - dry * 0.15));
+      // Wet stones under the water are darker and a little green.
+      const wet = 1 - smoothstep(3.8, 5.2, d);
+      c.multiply(new THREE.Color(1 - wet * 0.5, 1 - wet * 0.4, 1 - wet * 0.42));
       colors.set([c.r, c.g, c.b], i * 3);
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));

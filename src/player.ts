@@ -6,7 +6,7 @@ import { WALK_LIMIT, streamDist, forestDensity } from './world';
 
 const EYE = 1.6;
 const WALK = 1.7;
-const RUN = 4.2;
+const RUN = 5.3;
 
 export type ViewMode = 'first' | 'third';
 
@@ -80,7 +80,9 @@ export class Player {
     // Footsteps and a gentle head bob.
     if (speed > 0.3) {
       const prev = this.stepPhase;
-      this.stepPhase += dt * speed * 1.15;
+      // Longer strides when running: about 0.9 m a step walking, 1.4 m at full run.
+      const stride = THREE.MathUtils.mapLinear(THREE.MathUtils.clamp(speed, WALK, RUN), WALK, RUN, 0.87, 1.4);
+      this.stepPhase += (dt * speed) / stride;
       if (Math.floor(prev) !== Math.floor(this.stepPhase) && this.onStep) {
         const d = streamDist(this.position.x, this.position.z);
         const ground = d < 5.5 ? 'gravel' : forestDensity(this.position.x, this.position.z) > 0.5 ? 'forest' : 'grass';
@@ -96,7 +98,7 @@ export class Player {
       this.body.rotation.y = lerpAngle(this.body.rotation.y, face, Math.min(1, dt * 8));
     }
     const legs = this.body.userData.legs as THREE.Object3D[];
-    const swing = speed > 0.2 ? Math.sin(this.stepPhase * Math.PI) * 0.5 * Math.min(1, speed / WALK) : 0;
+    const swing = speed > 0.2 ? Math.sin(this.stepPhase * Math.PI) * Math.min(0.5, 0.5 * speed / WALK) * (1 + 0.6 * THREE.MathUtils.smoothstep(speed, WALK, RUN)) : 0;
     legs[0].rotation.x = swing;
     legs[1].rotation.x = -swing;
   }
