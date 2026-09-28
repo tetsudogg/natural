@@ -74,13 +74,13 @@ const fragmentShader = /* glsl */ `
     // White water: some stretches run as rapids over the stones, and the pool under the
     // waterfall churns. Foam is drawn as streaks stretched along the flow.
     vec2 wp = vWorldPos.xz;
-    float rapids = smoothstep(0.45, 0.75, vnoise(vec2(0.0, wp.y * 0.045) + 3.0) * 0.7 + vnoise(wp * 0.12) * 0.4);
+    float rapids = smoothstep(0.3, 0.6, vnoise(vec2(0.0, wp.y * 0.045) + 3.0) * 0.7 + vnoise(wp * 0.12) * 0.4);
     float fall = 1.0 - smoothstep(2.0, 12.0, abs(wp.y - uFallZ));
     float churn = max(rapids * 0.85, fall);
     vec2 fp = vec2(wp.x * 1.6, wp.y * 0.28 - uTime * 1.4);
     float streak = vnoise(fp) * 0.55 + vnoise(fp * 2.3 + 7.0) * 0.3 + vnoise(vec2(wp.x * 5.0, wp.y * 0.9 - uTime * 3.0)) * 0.25;
     float foam = smoothstep(1.0 - churn * 0.75, 1.05 - churn * 0.55, streak + n.x * 0.3) * churn;
-    foam = max(foam, churn * 0.35); // milky, bubbly water all through the rapids
+    foam = max(foam, churn * 0.45); // milky, bubbly water all through the rapids
     vec3 foamCol = vec3(0.9, 0.95, 0.95) * (uLight * 0.9 + 0.02) + uSunColor * 0.08;
     color = mix(color, foamCol, clamp(foam, 0.0, 0.92));
     alpha = max(alpha, foam);

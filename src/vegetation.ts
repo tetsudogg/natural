@@ -193,8 +193,8 @@ function broadleafGeometry(seed: number): TreeParts {
   for (let i = 0; i < tp.count; i++) tp.setX(i, tp.getX(i) + lean * tp.getY(i) + Math.sin(tp.getY(i) * 0.5 + seed) * 0.08);
   wood.push(mossyBase(colored(trunk, BARK), 1.6 + rnd(), seed));
   const fork = new THREE.Vector3(lean * trunkH, trunkH, 0);
-  const center = new THREE.Vector3(fork.x, trunkH + 3.2, 0);
-  const radius = new THREE.Vector3(4 + rnd(), 3.2, 4 + rnd());
+  const center = new THREE.Vector3(fork.x, trunkH + 2.8, 0);
+  const radius = new THREE.Vector3(4 + rnd(), 3.8, 4 + rnd());
 
   // Main limbs spread out and up from the fork.
   const tips: THREE.Vector3[] = [];
@@ -202,7 +202,7 @@ function broadleafGeometry(seed: number): TreeParts {
   for (let i = 0; i < limbs; i++) {
     const a = (i / limbs) * Math.PI * 2 + rnd() * 0.8;
     const tip = new THREE.Vector3(Math.cos(a) * radius.x * 0.45, trunkH + 1.6 + rnd() * 1.2, Math.sin(a) * radius.z * 0.45);
-    wood.push(limb(fork, tip, 0.17, 0.09));
+    wood.push(limb(fork, tip, 0.14, 0.07));
     tips.push(tip);
   }
   const lead = new THREE.Vector3(fork.x + (rnd() - 0.5) * 0.6, trunkH + 3.6, (rnd() - 0.5) * 0.6);
@@ -211,22 +211,22 @@ function broadleafGeometry(seed: number): TreeParts {
 
   const cards: THREE.BufferGeometry[] = [];
   const hue = rnd();
-  const clumps = 16;
+  const clumps = 18;
   for (let c = 0; c < clumps; c++) {
     const dir = new THREE.Vector3(rnd() * 2 - 1, rnd() * 1.6 - 0.5, rnd() * 2 - 1).normalize();
     const cc = dir.clone().multiply(radius).multiplyScalar(0.55 + rnd() * 0.3).add(center);
     // A branch from the nearest limb tip to this clump.
     let near = tips[0];
     for (const t of tips) if (t.distanceToSquared(cc) < near.distanceToSquared(cc)) near = t;
-    wood.push(limb(near, cc, 0.07, 0.025));
-    const clumpR = 1.0 + rnd() * 0.5;
+    wood.push(limb(near, cc, 0.05, 0.02));
+    const clumpR = 1.3 + rnd() * 0.6;
     const shade = 0.9 + rnd() * 0.2;
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < 11; i++) {
       const off = new THREE.Vector3(rnd() * 2 - 1, (rnd() * 2 - 1) * 0.7, rnd() * 2 - 1).normalize().multiplyScalar(clumpR * Math.sqrt(rnd()));
       const pos = cc.clone().add(off);
       const rot = new THREE.Euler(rnd() * Math.PI, rnd() * Math.PI, rnd() * Math.PI);
       const tint = srgb((0.8 + hue * 0.15 + rnd() * 0.1) * shade, (0.9 + rnd() * 0.1) * shade, (0.72 + rnd() * 0.12) * shade);
-      cards.push(card(1.5 + rnd() * 0.7, pos, rot, center, radius, tint));
+      cards.push(card(1.8 + rnd() * 0.8, pos, rot, center, radius, tint));
     }
   }
   return { wood: mergeGeometries(wood)!, leaves: mergeGeometries(cards)! };

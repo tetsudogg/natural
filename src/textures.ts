@@ -518,16 +518,16 @@ export function leafLitterTexture() {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = 'rgb(92,64,42)';
+  ctx.fillStyle = 'rgb(78,62,46)';
   ctx.fillRect(0, 0, size, size);
   for (let i = 0; i < 2600; i++) {
     const x = rnd() * size;
     const y = rnd() * size;
     const l = 5 + rnd() * 9;
     const tone = rnd();
-    const r = tone < 0.08 ? 120 : 125 + tone * 90;
-    const g = tone < 0.08 ? 140 : 80 + tone * 60;
-    const b = tone < 0.08 ? 60 : 40 + tone * 35;
+    const r = tone < 0.08 ? 120 : 115 + tone * 75;
+    const g = tone < 0.08 ? 140 : 85 + tone * 60;
+    const b = tone < 0.08 ? 60 : 50 + tone * 38;
     const dark = 0.55 + rnd() * 0.5;
     const rot = rnd() * Math.PI * 2;
     ctx.fillStyle = `rgb(${r * dark},${g * dark},${b * dark})`;
