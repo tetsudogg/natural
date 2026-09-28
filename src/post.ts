@@ -385,7 +385,7 @@ export function createPost(renderer: THREE.WebGLRenderer) {
       0.01 * d + 0.006 * warm + 0.002,
       0.012 * d - 0.008 * warm + 0.006 * light.mist + 0.005,
     );
-    finalMat.uniforms.uSaturation.value = 0.93 + 0.1 * warm - 0.08 * light.mist;
+    finalMat.uniforms.uSaturation.value = 1.02 + 0.1 * light.daylight + 0.06 * warm - 0.1 * light.mist;
     finalMat.uniforms.uContrast.value = 1.0 + 0.1 * light.daylight - 0.04 * light.mist;
 
     draw(finalMat, null);

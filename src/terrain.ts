@@ -1,18 +1,18 @@
 import * as THREE from 'three';
 import { HALF, forestDensity, heightAt, streamDist } from './world';
 import { fbm, lerp, smoothstep } from './noise';
-import { groundDetailTexture } from './textures';
+import { groundDetailTexture, leafLitterTexture } from './textures';
 
 const srgb = (r: number, g: number, b: number) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace);
 
 const GRAVEL = srgb(0.5, 0.48, 0.44);
 const MUD = srgb(0.36, 0.32, 0.25);
-const GRASS = srgb(0.3, 0.42, 0.16);
-const GRASS_DRY = srgb(0.42, 0.44, 0.22);
+const GRASS = srgb(0.32, 0.5, 0.13);
+const GRASS_DRY = srgb(0.44, 0.5, 0.2);
 const FOREST_FLOOR = srgb(0.22, 0.2, 0.13);
-const MOSS = srgb(0.2, 0.32, 0.13);
+const MOSS = srgb(0.26, 0.42, 0.1);
 const ROCK = srgb(0.4, 0.39, 0.36);
-const FAR_FOREST = srgb(0.12, 0.2, 0.1);
+const FAR_FOREST = srgb(0.1, 0.24, 0.07);
 
 function colorAt(x: number, z: number, slope: number, out: THREE.Color, far: boolean) {
   const d = streamDist(x, z);
@@ -56,6 +56,18 @@ function buildGrid(size: number, segs: number, far: boolean) {
     colors[i * 3 + 2] = c.b;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  if (!far) {
+    // How much of the ground is covered by fallen leaves: most of the forest floor,
+    // but not the wet banks or the open meadows.
+    const litter = new Float32Array(pos.count);
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const z = pos.getZ(i);
+      const n = fbm(x * 0.07 - 4, z * 0.07 + 9, 3);
+      litter[i] = smoothstep(0.25, 0.65, forestDensity(x, z)) * smoothstep(6, 11, streamDist(x, z)) * smoothstep(0.25, 0.5, n + 0.1);
+    }
+    geo.setAttribute('litter', new THREE.BufferAttribute(litter, 1));
+  }
   return geo;
 }
 
@@ -68,6 +80,23 @@ export function createTerrain() {
     roughness: 0.95,
     metalness: 0,
   });
+  const litterTex = leafLitterTexture();
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.tLitter = { value: litterTex };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float litter;\nvarying float vLitter;\nvarying vec2 vGroundXZ;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLitter = litter;\nvGroundXZ = position.xz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform sampler2D tLitter;\nvarying float vLitter;\nvarying vec2 vGroundXZ;')
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        {
+          vec3 leaves = texture2D(tLitter, vGroundXZ / 2.2).rgb * 0.8;
+          diffuseColor.rgb = mix(diffuseColor.rgb, leaves, vLitter);
+        }`,
+      );
+  };
   const main = new THREE.Mesh(buildGrid(HALF * 2, 400, false), mat);
   main.receiveShadow = true;
 

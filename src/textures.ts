@@ -127,9 +127,9 @@ export function foliageTexture(kind: 'leaf' | 'needle' | 'maple', seed: number) 
         const px = half + Math.cos(a) * len * t + (rnd() - 0.5) * 28;
         const py = half + Math.sin(a) * len * t + (rnd() - 0.5) * 28;
         const light = rnd();
-        const r = 60 + light * 55;
-        const g = 105 + light * 80;
-        const bl = 30 + light * 30;
+        const r = 88 + light * 72;
+        const g = 145 + light * 90;
+        const bl = 30 + light * 36;
         const lw = 12 + rnd() * 6;
         const lh = 5.5 + rnd() * 2.5;
         ctx.save();
@@ -182,7 +182,7 @@ export function foliageTexture(kind: 'leaf' | 'needle' | 'maple', seed: number) 
         const px = half + Math.cos(a) * len * t + (rnd() - 0.5) * 30;
         const py = half + Math.sin(a) * len * t + (rnd() - 0.5) * 30;
         const light = rnd();
-        ctx.fillStyle = `rgb(${70 + light * 60},${120 + light * 70},${35 + light * 25})`;
+        ctx.fillStyle = `rgb(${95 + light * 70},${150 + light * 85},${35 + light * 30})`;
         ctx.save();
         ctx.translate(px, py);
         ctx.rotate(a + Math.PI / 2 + (rnd() - 0.5) * 1.2);
@@ -495,9 +495,60 @@ export function barkTexture() {
     }
   }
   ctx.putImageData(img, 0, 0);
+  // Pale lichen and dark damp patches, like the mottled trunks of beech trees.
+  for (let i = 0; i < 70; i++) {
+    const pale = rnd() < 0.6;
+    ctx.fillStyle = pale ? `rgba(${225 + rnd() * 25},${228 + rnd() * 25},${215 + rnd() * 25},${0.25 + rnd() * 0.35})` : `rgba(40,45,35,${0.15 + rnd() * 0.2})`;
+    ctx.beginPath();
+    const x = rnd() * w;
+    const y = rnd() * h;
+    ctx.ellipse(x, y, 3 + rnd() * 10, 2 + rnd() * 6, rnd() * 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
   const tex = new THREE.CanvasTexture(canvas);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// Fallen leaves covering the forest floor: browns, tans and a few fresh greens.
+export function leafLitterTexture() {
+  const size = 512;
+  const rnd = mulberry32(29);
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = 'rgb(92,64,42)';
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 2600; i++) {
+    const x = rnd() * size;
+    const y = rnd() * size;
+    const l = 5 + rnd() * 9;
+    const tone = rnd();
+    const r = tone < 0.08 ? 120 : 125 + tone * 90;
+    const g = tone < 0.08 ? 140 : 80 + tone * 60;
+    const b = tone < 0.08 ? 60 : 40 + tone * 35;
+    const dark = 0.55 + rnd() * 0.5;
+    const rot = rnd() * Math.PI * 2;
+    ctx.fillStyle = `rgb(${r * dark},${g * dark},${b * dark})`;
+    // Draw each leaf wrapped around the edges so the texture tiles.
+    for (const ox of [0, -size, size]) {
+      for (const oy of [0, -size, size]) {
+        if (x + ox < -20 || x + ox > size + 20 || y + oy < -20 || y + oy > size + 20) continue;
+        ctx.save();
+        ctx.translate(x + ox, y + oy);
+        ctx.rotate(rot);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, l, l * 0.45, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
   return tex;
 }
 

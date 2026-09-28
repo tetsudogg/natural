@@ -53,8 +53,10 @@ function addWind(mat: THREE.Material, amount: number, stiffness: number, foliage
           {
             // Leaves glow when the sun is behind them.
             vec3 toFrag = normalize(-vViewPosition);
-            float back = pow(max(dot(toFrag, uSunView), 0.0), 4.0);
-            reflectedLight.directDiffuse += diffuseColor.rgb * uSunColor * (back * 0.9 + 0.12);
+            float back = pow(max(dot(toFrag, uSunView), 0.0), 3.0);
+            // Light through a leaf comes out a warmer, yellower green.
+            vec3 through = diffuseColor.rgb * vec3(1.15, 1.2, 0.55);
+            reflectedLight.directDiffuse += through * uSunColor * (back * 2.0 + 0.22);
           }`,
         );
     }
@@ -91,7 +93,8 @@ function colored(geo: THREE.BufferGeometry, color: THREE.Color, jitter = 0, seed
   return g;
 }
 
-const BARK = srgb(0.62, 0.55, 0.47);
+const BARK = srgb(0.7, 0.68, 0.62);
+const TRUNK_MOSS = srgb(0.3, 0.46, 0.12);
 const CEDAR_BARK = srgb(0.66, 0.46, 0.34);
 
 // One card: a square with the leaf texture. Normals point away from the crown's centre,
@@ -146,7 +149,7 @@ function cedarGeometry(seed: number): TreeParts {
       cards.push(card(r * 1.25 + 0.9, pos, rot, center, radius, srgb(0.75 + rnd() * 0.2, 0.85 + rnd() * 0.15, 0.75)));
     }
   }
-  return { wood: colored(trunk, CEDAR_BARK), leaves: mergeGeometries(cards)! };
+  return { wood: mossyBase(colored(trunk, CEDAR_BARK), 1.4, seed), leaves: mergeGeometries(cards)! };
 }
 
 // A tapered limb from a to b.
@@ -160,18 +163,38 @@ function limb(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number) {
   return colored(g, BARK);
 }
 
+// Moss creeping up the base of a trunk, thicker on one side.
+function mossyBase(geo: THREE.BufferGeometry, height: number, seed: number) {
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  const col = geo.attributes.color as THREE.BufferAttribute;
+  const c = new THREE.Color();
+  const side = seed * 1.7;
+  for (let i = 0; i < pos.count; i++) {
+    const a = Math.atan2(pos.getZ(i), pos.getX(i));
+    const reach = height * (0.55 + 0.45 * Math.cos(a - side));
+    const t = 1 - THREE.MathUtils.smoothstep(pos.getY(i), reach * 0.4, reach);
+    c.setRGB(col.getX(i), col.getY(i), col.getZ(i)).lerp(TRUNK_MOSS, t * 0.85);
+    col.setXYZ(i, c.r, c.g, c.b);
+  }
+  return geo;
+}
+
 // Broadleaf tree (oak, beech, maple): a trunk that forks into limbs, each limb carrying
 // a few rounded clumps of leaves. Gaps between clumps let light and sky through.
 function broadleafGeometry(seed: number): TreeParts {
   const rnd = mulberry32(seed);
   const wood: THREE.BufferGeometry[] = [];
-  const trunkH = 4.5 + rnd() * 1.5;
-  const trunk = new THREE.CylinderGeometry(0.22, 0.4, trunkH, 12);
+  const trunkH = 7.5 + rnd() * 3.5;
+  const trunk = new THREE.CylinderGeometry(0.17, 0.34, trunkH, 12, 6);
   trunk.translate(0, trunkH / 2, 0);
-  wood.push(colored(trunk, BARK));
-  const fork = new THREE.Vector3(0, trunkH, 0);
-  const center = new THREE.Vector3(0, trunkH + 3, 0);
-  const radius = new THREE.Vector3(3.8 + rnd(), 3, 3.8 + rnd());
+  // A slight lean and bend so trunks are not ruler-straight.
+  const lean = (rnd() - 0.5) * 0.08;
+  const tp = trunk.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < tp.count; i++) tp.setX(i, tp.getX(i) + lean * tp.getY(i) + Math.sin(tp.getY(i) * 0.5 + seed) * 0.08);
+  wood.push(mossyBase(colored(trunk, BARK), 1.6 + rnd(), seed));
+  const fork = new THREE.Vector3(lean * trunkH, trunkH, 0);
+  const center = new THREE.Vector3(fork.x, trunkH + 3.2, 0);
+  const radius = new THREE.Vector3(4 + rnd(), 3.2, 4 + rnd());
 
   // Main limbs spread out and up from the fork.
   const tips: THREE.Vector3[] = [];
@@ -182,13 +205,13 @@ function broadleafGeometry(seed: number): TreeParts {
     wood.push(limb(fork, tip, 0.17, 0.09));
     tips.push(tip);
   }
-  const lead = new THREE.Vector3((rnd() - 0.5) * 0.6, trunkH + 3.4, (rnd() - 0.5) * 0.6);
+  const lead = new THREE.Vector3(fork.x + (rnd() - 0.5) * 0.6, trunkH + 3.6, (rnd() - 0.5) * 0.6);
   wood.push(limb(fork, lead, 0.15, 0.07));
   tips.push(lead);
 
   const cards: THREE.BufferGeometry[] = [];
   const hue = rnd();
-  const clumps = 12;
+  const clumps = 16;
   for (let c = 0; c < clumps; c++) {
     const dir = new THREE.Vector3(rnd() * 2 - 1, rnd() * 1.6 - 0.5, rnd() * 2 - 1).normalize();
     const cc = dir.clone().multiply(radius).multiplyScalar(0.55 + rnd() * 0.3).add(center);
@@ -196,14 +219,14 @@ function broadleafGeometry(seed: number): TreeParts {
     let near = tips[0];
     for (const t of tips) if (t.distanceToSquared(cc) < near.distanceToSquared(cc)) near = t;
     wood.push(limb(near, cc, 0.07, 0.025));
-    const clumpR = 1.1 + rnd() * 0.5;
+    const clumpR = 1.0 + rnd() * 0.5;
     const shade = 0.9 + rnd() * 0.2;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 9; i++) {
       const off = new THREE.Vector3(rnd() * 2 - 1, (rnd() * 2 - 1) * 0.7, rnd() * 2 - 1).normalize().multiplyScalar(clumpR * Math.sqrt(rnd()));
       const pos = cc.clone().add(off);
       const rot = new THREE.Euler(rnd() * Math.PI, rnd() * Math.PI, rnd() * Math.PI);
       const tint = srgb((0.8 + hue * 0.15 + rnd() * 0.1) * shade, (0.9 + rnd() * 0.1) * shade, (0.72 + rnd() * 0.12) * shade);
-      cards.push(card(1.7 + rnd() * 0.8, pos, rot, center, radius, tint));
+      cards.push(card(1.5 + rnd() * 0.7, pos, rot, center, radius, tint));
     }
   }
   return { wood: mergeGeometries(wood)!, leaves: mergeGeometries(cards)! };
@@ -303,13 +326,13 @@ function rockGeometry(seed: number, mossy: boolean) {
   const pos = merged.attributes.position as THREE.BufferAttribute;
   const cols = new Float32Array(count * 3);
   const stone = srgb(0.62, 0.6, 0.56);
-  const moss = srgb(0.36, 0.46, 0.2);
+  const moss = srgb(0.34, 0.52, 0.1);
   const c = new THREE.Color();
   for (let i = 0; i < count; i++) {
     const up = nrm.getY(i);
     const ao = 0.7 + 0.3 * THREE.MathUtils.clamp(pos.getY(i) + 0.4, 0, 1);
     c.copy(stone);
-    if (mossy) c.lerp(moss, THREE.MathUtils.smoothstep(up, 0.35, 0.75) * (0.6 + 0.4 * fbm(pos.getX(i) * 3, pos.getZ(i) * 3, 2)));
+    if (mossy) c.lerp(moss, THREE.MathUtils.smoothstep(up, -0.1, 0.55) * (0.7 + 0.3 * fbm(pos.getX(i) * 3, pos.getZ(i) * 3, 2)));
     c.multiplyScalar(ao);
     cols.set([c.r, c.g, c.b], i * 3);
   }
@@ -435,6 +458,7 @@ export function createVegetation() {
   const cedars: Placement[] = [];
   const broad: Placement[][] = [[], [], []];
   const bushes: Placement[] = [];
+  const saplings: Placement[] = [];
   const step = 5.5;
   for (let z = -HALF + 4; z < HALF - 4; z += step) {
     for (let x = -HALF + 4; x < HALF - 4; x += step) {
@@ -447,7 +471,7 @@ export function createVegetation() {
       const bank = d > 7 && d < 14 ? 0.18 : 0;
       if (slope > 1.1) continue;
       if (rnd() < Math.max(dens * 0.85, bank)) {
-        const cedarZone = fbm(px * 0.008 + 5, pz * 0.008, 2) > 0.5;
+        const cedarZone = fbm(px * 0.008 + 5, pz * 0.008, 2) > 0.6;
         const tint = new THREE.Color().setHSL(0, 0, 0.8 + rnd() * 0.2, THREE.SRGBColorSpace);
         if (cedarZone && d > 12) {
           cedars.push({ m: place(px, pz, 0.7 + rnd() * 0.7, rnd() * 6.28, 0.2), c: tint });
@@ -455,7 +479,10 @@ export function createVegetation() {
           broad[Math.floor(rnd() * 3)].push({ m: place(px, pz, 0.7 + rnd() * 0.8, rnd() * 6.28, 0.2), c: tint });
         }
         treeSpots.push({ x: px, z: pz });
-      } else if (rnd() < 0.25 + dens * 0.4 && d > 6 && clearingFactor(px, pz) < 0.5) {
+      } else if (dens > 0.35 && d > 8 && rnd() < 0.35) {
+        // Young trees fill the space under the canopy.
+        saplings.push({ m: place(px + (rnd() - 0.5) * 2, pz + (rnd() - 0.5) * 2, 0.28 + rnd() * 0.2, rnd() * 6.28, 0.1), c: new THREE.Color().setHSL(0, 0, 0.85 + rnd() * 0.15, THREE.SRGBColorSpace) });
+      } else if (rnd() < 0.3 + dens * 0.5 && d > 6 && clearingFactor(px, pz) < 0.5) {
         bushes.push({ m: place(px, pz, 0.6 + rnd() * 0.9, rnd() * 6.28, 0.1), c: new THREE.Color().setHSL(0, 0, 0.7 + rnd() * 0.3, THREE.SRGBColorSpace) });
       }
     }
@@ -485,6 +512,9 @@ export function createVegetation() {
   };
   addTree(cedarGeometry(21), needleMat, cedars);
   broad.forEach((list, i) => addTree(broadleafGeometry(7 + i), i === 2 ? mapleMat : broadMat, list));
+  const sapling = broadleafGeometry(11);
+  group.add(chunked(sapling.leaves, broadMat, saplings, 50, { shadow: true, maxDist: 220 }));
+  group.add(chunked(sapling.wood, woodMat, saplings, 50, { maxDist: 160 }));
   const bushMat = leafMat('leaf', 33, 0.06, 1.5);
   const bushGroup = chunked(bushGeometry(), bushMat, bushes, 50, { shadow: true, maxDist: 200 });
   group.add(bushGroup);
@@ -524,7 +554,7 @@ export function createVegetation() {
     );
     // Rocks away from the water are more often mossy.
     const wet = streamDist(x, z) < 4;
-    const shape = Math.floor(rnd() * 2) + (!wet && rnd() < 0.55 ? 2 : 0);
+    const shape = Math.floor(rnd() * 2) + (rnd() < (wet ? 0.6 : 0.8) ? 2 : 0);
     rocks[shape].push({ m, c: new THREE.Color().setHSL(0.08, 0.06, 0.75 + rnd() * 0.25, THREE.SRGBColorSpace) });
   };
   for (let i = 0; i < 700; i++) {
@@ -532,6 +562,11 @@ export function createVegetation() {
     const side = rnd() < 0.5 ? -1 : 1;
     const off = rnd() * 7;
     addRock(streamX(z) + side * off, z, 0.25 + rnd() * (off < 3 ? 0.5 : 1.1), 0.35);
+  }
+  // Big mossy boulders standing in the current, the water breaking white around them.
+  for (let i = 0; i < 160; i++) {
+    const z = (rnd() * 2 - 1) * (HALF - 5);
+    addRock(streamX(z) + (rnd() - 0.5) * 9, z, 0.7 + rnd() * 1.3, 0.35);
   }
   for (let i = 0; i < 40; i++) {
     const z = WATERFALL_Z + (rnd() - 0.5) * 10;

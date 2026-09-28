@@ -20,15 +20,15 @@ export interface DayState {
 
 const NIGHT_FOG = new THREE.Color().setRGB(0.018, 0.024, 0.04, THREE.SRGBColorSpace);
 const DUSK_FOG = new THREE.Color().setRGB(0.75, 0.52, 0.4, THREE.SRGBColorSpace);
-const DAY_FOG = new THREE.Color().setRGB(0.66, 0.76, 0.84, THREE.SRGBColorSpace);
+const DAY_FOG = new THREE.Color().setRGB(0.6, 0.73, 0.84, THREE.SRGBColorSpace);
 const MIST_FOG = new THREE.Color().setRGB(0.78, 0.8, 0.8, THREE.SRGBColorSpace);
 
 export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
   const sky = new Sky();
   sky.scale.setScalar(3500);
   const u = sky.material.uniforms;
-  u.turbidity.value = 5;
-  u.rayleigh.value = 1.6;
+  u.turbidity.value = 3;
+  u.rayleigh.value = 2;
   u.mieCoefficient.value = 0.004;
   u.mieDirectionalG.value = 0.8;
   scene.add(sky);

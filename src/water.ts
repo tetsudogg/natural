@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HALF, streamX, waterLevel } from './world';
+import { HALF, streamX, waterLevel, WATERFALL_Z } from './world';
 import { waterNormalTexture, glowTexture } from './textures';
 import { mulberry32 } from './noise';
 
@@ -34,10 +34,17 @@ const fragmentShader = /* glsl */ `
   uniform vec3 uShallow;
   uniform vec3 uDeep;
   uniform float uLight;
+  uniform float uFallZ;
   varying vec4 vMirrorCoord;
   varying vec3 vWorldPos;
   varying vec2 vUv;
   #include <common>
+  float vhash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float vnoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(vhash(i), vhash(i + vec2(1, 0)), u.x), mix(vhash(i + vec2(0, 1)), vhash(i + vec2(1, 1)), u.x), u.y);
+  }
   #include <fog_pars_fragment>
   void main() {
     // Two layers of ripples drifting downstream at different speeds.
@@ -63,6 +70,20 @@ const fragmentShader = /* glsl */ `
 
     vec3 color = mix(body, reflection, clamp(fresnel * uReflect + 0.08, 0.0, 1.0)) + uSunColor * spec;
     float alpha = mix(0.35, 0.97, fresnel) * mix(1.0, 0.75, smoothstep(0.6, 1.0, across)) + spec;
+
+    // White water: some stretches run as rapids over the stones, and the pool under the
+    // waterfall churns. Foam is drawn as streaks stretched along the flow.
+    vec2 wp = vWorldPos.xz;
+    float rapids = smoothstep(0.45, 0.75, vnoise(vec2(0.0, wp.y * 0.045) + 3.0) * 0.7 + vnoise(wp * 0.12) * 0.4);
+    float fall = 1.0 - smoothstep(2.0, 12.0, abs(wp.y - uFallZ));
+    float churn = max(rapids * 0.85, fall);
+    vec2 fp = vec2(wp.x * 1.6, wp.y * 0.28 - uTime * 1.4);
+    float streak = vnoise(fp) * 0.55 + vnoise(fp * 2.3 + 7.0) * 0.3 + vnoise(vec2(wp.x * 5.0, wp.y * 0.9 - uTime * 3.0)) * 0.25;
+    float foam = smoothstep(1.0 - churn * 0.75, 1.05 - churn * 0.55, streak + n.x * 0.3) * churn;
+    foam = max(foam, churn * 0.35); // milky, bubbly water all through the rapids
+    vec3 foamCol = vec3(0.9, 0.95, 0.95) * (uLight * 0.9 + 0.02) + uSunColor * 0.08;
+    color = mix(color, foamCol, clamp(foam, 0.0, 0.92));
+    alpha = max(alpha, foam);
     gl_FragColor = vec4(color, clamp(alpha, 0.0, 1.0));
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -114,9 +135,10 @@ export function createStream() {
         uReflect: { value: 1 },
         uSunDir: { value: new THREE.Vector3(0, 1, 0) },
         uSunColor: { value: new THREE.Color(1, 1, 1) },
-        uShallow: { value: new THREE.Color().setRGB(0.42, 0.44, 0.34, THREE.SRGBColorSpace) },
-        uDeep: { value: new THREE.Color().setRGB(0.1, 0.2, 0.18, THREE.SRGBColorSpace) },
+        uShallow: { value: new THREE.Color().setRGB(0.42, 0.52, 0.42, THREE.SRGBColorSpace) },
+        uDeep: { value: new THREE.Color().setRGB(0.06, 0.3, 0.29, THREE.SRGBColorSpace) },
         uLight: { value: 1 },
+        uFallZ: { value: WATERFALL_Z },
       },
     ]),
     vertexShader,
