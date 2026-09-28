@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { createClouds } from './atmosphere';
+import { createPost, QUALITY_LABEL, QUALITY_PIXEL_RATIO, type Quality } from './post';
 import { createTerrain } from './terrain';
 import { createVegetation, updateDistanceCulling, windUniforms } from './vegetation';
 import { createStream, createFireflies, NO_REFLECT_LAYER } from './water';
@@ -26,9 +28,11 @@ interface Save {
   hour: number;
   view: ViewMode;
   speed: number;
+  quality?: Quality;
 }
 
 const SAVE_KEY = 'natural.save.v1';
+const QUALITIES: Quality[] = ['high', 'medium', 'low'];
 
 function loadSave(): Save | null {
   try {
@@ -58,8 +62,8 @@ function toast(text: string) {
 
 async function main() {
   const canvas = $<HTMLCanvasElement>('scene');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+  // Antialiasing happens in the post-processing target, so the canvas itself needs none.
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -83,8 +87,21 @@ async function main() {
   scene.add(stream.mesh);
   const fireflies = createFireflies();
   scene.add(fireflies.points);
+  const clouds = createClouds();
+  scene.add(clouds.mesh);
 
   const saved = loadSave();
+  const post = createPost(renderer);
+  // ?quality=low|medium|high overrides the saved choice (handy for testing).
+  const qParam = new URLSearchParams(location.search).get('quality') as Quality | null;
+  let quality: Quality = qParam && QUALITIES.includes(qParam) ? qParam : (saved?.quality ?? 'high');
+  function applyQuality() {
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY_PIXEL_RATIO[quality]));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    post.setQuality(quality);
+    post.setSize();
+  }
+  applyQuality();
   const home = clearings[0];
   const player = new Player(saved?.x ?? home.x - 6, saved?.z ?? home.z, saved?.yaw ?? Math.PI / 2 - 0.35);
   player.pitch = saved?.pitch ?? -0.05;
@@ -100,9 +117,10 @@ async function main() {
   // Warm up shaders so the first frame after "start" does not stutter.
   sky.update(hour, player.position);
   player.applyCamera(camera);
+  clouds.update(0, player.position, sky.state.sunDir, sky.state.sunColor, sky.state.daylight, sky.state.night, sky.state.fogColor);
   renderer.compile(scene, camera);
   renderer.shadowMap.needsUpdate = true;
-  renderer.render(scene, camera);
+  post.render(scene, camera, sky.state);
 
   $('loading').hidden = true;
   const startBtn = $<HTMLButtonElement>('start');
@@ -228,6 +246,12 @@ async function main() {
       case 'KeyH':
         help.classList.toggle('off');
         return;
+      case 'KeyQ':
+        quality = QUALITIES[(QUALITIES.indexOf(quality) + 1) % QUALITIES.length];
+        applyQuality();
+        slowTime = 0;
+        toast(QUALITY_LABEL[quality]);
+        return;
     }
     if (!viewing) player.keyDown(e.code);
   });
@@ -238,10 +262,11 @@ async function main() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    post.setSize();
   });
 
   const save = () =>
-    writeSave({ x: player.position.x, z: player.position.z, yaw: player.yaw, pitch: player.pitch, hour, view: player.view, speed: speedIndex });
+    writeSave({ x: player.position.x, z: player.position.z, yaw: player.yaw, pitch: player.pitch, hour, view: player.view, speed: speedIndex, quality });
   setInterval(() => started && save(), 5000);
   window.addEventListener('beforeunload', () => started && save());
 
@@ -252,6 +277,8 @@ async function main() {
   timer.connect(document);
   let elapsed = 0;
   let sinceFrame = 0;
+  // If the computer struggles for a while, step the picture quality down by itself.
+  let slowTime = 0;
 
   renderer.setAnimationLoop(() => {
     timer.update();
@@ -262,6 +289,15 @@ async function main() {
     const dt = Math.min(0.1, sinceFrame);
     sinceFrame = 0;
     elapsed += dt;
+    if (started && !viewing && !document.hidden && quality !== 'low' && !qParam) {
+      slowTime = raw > 1 / 26 ? slowTime + raw : Math.max(0, slowTime - raw * 0.5);
+      if (slowTime > 4) {
+        quality = QUALITIES[QUALITIES.indexOf(quality) + 1];
+        applyQuality();
+        slowTime = 0;
+        toast(`動きが重いため、${QUALITY_LABEL[quality]} にしました（Q で変更）`);
+      }
+    }
 
     hour = (hour + dt * TIME_SPEEDS[speedIndex].hoursPerSecond) % 24;
     windUniforms.uTime.value = elapsed;
@@ -277,6 +313,7 @@ async function main() {
     const day = sky.update(hour, player.position);
     stream.update(elapsed, day.sunDir, day.sunColor, day.sunIntensity, day.daylight);
     fireflies.update(elapsed, day.night);
+    clouds.update(elapsed, player.position, day.sunDir, day.sunColor, day.daylight, day.night, day.fogColor);
     for (const g of veg.cullGroups) updateDistanceCulling(g, camera.position);
     sound.update(dt, camera, day.daylight, day.night, hour);
 
@@ -285,7 +322,7 @@ async function main() {
     windUniforms.uSunColor.value.copy(day.sunColor).multiplyScalar(day.sunIntensity * 0.35);
     stream.renderReflection(renderer, scene, camera);
     renderer.shadowMap.needsUpdate = true;
-    renderer.render(scene, camera);
+    post.render(scene, camera, day);
     if (++frames >= frameLimit) {
       renderer.setAnimationLoop(null);
       document.title = 'Natural (stopped)';

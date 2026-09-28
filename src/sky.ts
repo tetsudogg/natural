@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { mulberry32, smoothstep } from './noise';
 import { glowTexture } from './textures';
+import { waterLevel } from './world';
 
 export interface DayState {
   sunDir: THREE.Vector3;
@@ -12,6 +13,9 @@ export interface DayState {
   hour: number;
   sunColor: THREE.Color;
   sunIntensity: number;
+  mist: number; // 0..1, how thick the morning mist is
+  warm: number; // 0..1, golden-hour warmth of the sunlight
+  fogColor: THREE.Color;
 }
 
 const NIGHT_FOG = new THREE.Color().setRGB(0.018, 0.024, 0.04, THREE.SRGBColorSpace);
@@ -88,9 +92,11 @@ export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
   const hemi = new THREE.HemisphereLight(0xbfd8ff, 0x3a3a22, 0.5);
   scene.add(hemi);
 
-  scene.fog = new THREE.FogExp2(DAY_FOG.getHex(), 0.003);
+  // Height fog (see atmosphere.ts): near = mist density at its base, far = base height.
+  const fog = new THREE.Fog(DAY_FOG.getHex(), 0.004, 0);
+  scene.fog = fog;
 
-  const state: DayState = { sunDir: new THREE.Vector3(), daylight: 1, night: 0, hour: 12, sunColor: new THREE.Color(), sunIntensity: 0 };
+  const state: DayState = { sunDir: new THREE.Vector3(), daylight: 1, night: 0, hour: 12, sunColor: new THREE.Color(), sunIntensity: 0, mist: 0, warm: 0, fogColor: fog.color };
   const tmp = new THREE.Color();
 
   function update(hour: number, focus: THREE.Vector3) {
@@ -130,12 +136,15 @@ export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
     hemi.color.setRGB(0.75 + 0.1 * warm, 0.85, 1);
 
     // Fog: misty in the early morning, warm at dusk, dark blue at night.
-    const fog = scene.fog as THREE.FogExp2;
-    tmp.copy(DAY_FOG).lerp(DUSK_FOG, warm * state.daylight * 0.7).lerp(NIGHT_FOG, 1 - state.daylight);
     const morning = smoothstep(4.5, 6, hour) * (1 - smoothstep(7.5, 9.5, hour));
-    tmp.lerp(MIST_FOG, morning * 0.5 * state.daylight);
+    tmp.copy(DAY_FOG).lerp(DUSK_FOG, warm * state.daylight * 0.7).lerp(MIST_FOG, morning * 0.5);
+    tmp.lerp(NIGHT_FOG, 1 - state.daylight);
     fog.color.copy(tmp);
-    fog.density = 0.0017 + morning * 0.006 + (1 - state.daylight) * 0.001;
+    const evening = smoothstep(17, 19, hour) * (1 - smoothstep(21, 23, hour));
+    fog.near = 0.0022 + morning * 0.017 + evening * 0.004 + (1 - state.daylight) * 0.0015;
+    fog.far = waterLevel(focus.z) + 1.5;
+    state.mist = morning;
+    state.warm = warm;
 
     scene.environmentIntensity = 0.06 + 0.3 * state.daylight;
 
