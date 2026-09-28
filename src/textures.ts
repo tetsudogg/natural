@@ -8,6 +8,8 @@ import barkNor from './assets/bark_nor.webp';
 import cliffDiff from './assets/cliff_diff.webp';
 import cliffNor from './assets/cliff_nor.webp';
 import fernUrl from './assets/fern.webp';
+import flowersUrl from './assets/flowers.webp';
+import grassUrl from './assets/grass.webp';
 import grassDiff from './assets/grass_diff.webp';
 import grassNor from './assets/grass_nor.webp';
 import gravelDiff from './assets/gravel_diff.webp';
@@ -143,7 +145,7 @@ export function glowTexture() {
 
 // Leaf sprays with transparent gaps, used on the cards that make up tree crowns.
 export function foliageTexture(kind: 'leaf' | 'needle' | 'maple', seed: number) {
-  const size = 512;
+  const size = 1024;
   const rnd = mulberry32(seed);
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
@@ -161,15 +163,15 @@ export function foliageTexture(kind: 'leaf' | 'needle' | 'maple', seed: number) 
       const a = rnd() * Math.PI * 2;
       const len = 256 * (0.24 + rnd() * 0.2);
       twigs.push({ a, len });
-      for (let i = 0; i < (maple ? 16 : 13); i++) {
+      for (let i = 0; i < (maple ? 24 : 20); i++) {
         const t = 0.15 + rnd() * 0.85;
         leaves.push({
           x: half + Math.cos(a) * len * t + (rnd() - 0.5) * 20,
           y: half + Math.sin(a) * len * t + (rnd() - 0.5) * 20,
           rot: a + Math.PI / 2 + (rnd() - 0.5) * 1.6,
-          s: maple ? 20 + rnd() * 10 : 26 + rnd() * 14,
+          s: maple ? 18 + rnd() * 10 : 22 + rnd() * 14,
           cell: maple ? Math.floor(rnd() * 6) : Math.floor(rnd() * 8),
-          shade: 0.7 + rnd() * 0.45,
+          shade: 0.55 + rnd() * 0.6,
         });
       }
     }
@@ -182,6 +184,8 @@ export function foliageTexture(kind: 'leaf' | 'needle' | 'maple', seed: number) 
         ctx.lineTo(half + Math.cos(a) * len, half + Math.sin(a) * len);
         ctx.stroke();
       }
+      // Shaded leaves deep in the spray first, sunlit ones on top: gives the card depth.
+      leaves.sort((a, b) => a.shade - b.shade);
       for (const l of leaves) {
         ctx.save();
         ctx.translate(l.x, l.y);
@@ -220,211 +224,22 @@ export function foliageTexture(kind: 'leaf' | 'needle' | 'maple', seed: number) 
   return tex;
 }
 
-// Eight wild plants in one texture, four per row:
-// top row: white fleabane, yellow buttercup, purple bellflower, blue dayflower;
-// bottom row: pink fringed pink (nadeshiko), yellow patrinia (ominaeshi),
-// silver grass (susuki), white clover.
+// Eight wild plants in one texture, four per row, assembled from photographed parts
+// by scripts/fetch_textures.py:
+// top row: white daisy, yellow buttercup, purple and blue five-petalled flowers;
+// bottom row: pink flowers, dandelion, silver grass, clover.
 export type FlowerKind = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 export const FLOWER_KINDS = 8;
 export function flowerAtlas() {
-  const q = 256;
-  const rnd = mulberry32(21);
-  const canvas = document.createElement('canvas');
-  canvas.width = q * 4;
-  canvas.height = q * 2;
-  const ctx = canvas.getContext('2d')!;
-  const stem = (x: number, y0: number, y1: number, bend: number) => {
-    ctx.strokeStyle = 'rgb(70,110,45)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(x, y0);
-    ctx.quadraticCurveTo(x + bend, (y0 + y1) / 2, x + bend * 0.6, y1);
-    ctx.stroke();
-    // a couple of leaves
-    ctx.fillStyle = 'rgb(80,125,50)';
-    for (let i = 0; i < 2; i++) {
-      const ly = y0 - (y0 - y1) * (0.2 + rnd() * 0.35);
-      ctx.save();
-      ctx.translate(x + bend * 0.3, ly);
-      ctx.rotate((i ? 1 : -1) * (0.6 + rnd() * 0.4));
-      ctx.beginPath();
-      ctx.ellipse(0, -8, 3, 10, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-    return [x + bend * 0.6, y1] as const;
-  };
-  for (let k = 0; k < 4; k++) {
-    const ox = k * q;
-    const oy = 0;
-    const n = k === 2 ? 4 : 6;
-    for (let i = 0; i < n; i++) {
-      const x = ox + q * (0.15 + 0.7 * (i + rnd() * 0.6) / n);
-      const top = oy + q * (0.15 + rnd() * 0.35);
-      const [hx, hy] = stem(x, oy + q - 2, top, (rnd() - 0.5) * 20);
-      ctx.save();
-      ctx.translate(hx, hy);
-      if (k === 0) {
-        // many thin white petals around a yellow centre
-        ctx.fillStyle = 'rgb(245,242,235)';
-        for (let p = 0; p < 18; p++) {
-          ctx.save();
-          ctx.rotate((p / 18) * Math.PI * 2);
-          ctx.fillRect(-1, 2, 2, 9);
-          ctx.restore();
-        }
-        ctx.fillStyle = 'rgb(235,200,60)';
-        ctx.beginPath();
-        ctx.arc(0, 0, 4, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (k === 1) {
-        ctx.fillStyle = 'rgb(250,215,40)';
-        for (let p = 0; p < 5; p++) {
-          ctx.save();
-          ctx.rotate((p / 5) * Math.PI * 2);
-          ctx.beginPath();
-          ctx.ellipse(0, 5, 4.5, 6, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
-        }
-        ctx.fillStyle = 'rgb(200,160,30)';
-        ctx.beginPath();
-        ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (k === 2) {
-        // hanging bells along the stem top
-        for (let b = 0; b < 3; b++) {
-          ctx.save();
-          ctx.translate((b - 1) * 7, b * 12);
-          ctx.fillStyle = 'rgb(140,110,200)';
-          ctx.beginPath();
-          ctx.moveTo(-6, 12);
-          ctx.quadraticCurveTo(-6, 0, 0, 0);
-          ctx.quadraticCurveTo(6, 0, 6, 12);
-          ctx.lineTo(-6, 12);
-          ctx.fill();
-          ctx.restore();
-        }
-      } else {
-        // two rounded blue petals
-        ctx.fillStyle = 'rgb(60,110,230)';
-        for (const s of [-1, 1]) {
-          ctx.beginPath();
-          ctx.ellipse(s * 5, -2, 5, 6, 0, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.fillStyle = 'rgb(240,210,60)';
-        ctx.fillRect(-1, 2, 2, 5);
-      }
-      ctx.restore();
-    }
-  }
+  const tex = loader.load(flowersUrl);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
 
-  // Nadeshiko: five pink petals with finely fringed edges.
-  for (let i = 0; i < 5; i++) {
-    const x = q * (0.15 + 0.7 * (i + rnd() * 0.6) / 5);
-    const [hx, hy] = stem(x, q * 2 - 2, q + q * (0.2 + rnd() * 0.3), (rnd() - 0.5) * 20);
-    ctx.save();
-    ctx.translate(hx, hy);
-    ctx.rotate(rnd());
-    for (let p = 0; p < 5; p++) {
-      ctx.save();
-      ctx.rotate((p / 5) * Math.PI * 2);
-      ctx.fillStyle = 'rgb(236,150,190)';
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(-4, 8);
-      for (let f = 0; f <= 6; f++) ctx.lineTo(-4 + (f / 6) * 8, f % 2 ? 11 : 15);
-      ctx.lineTo(4, 8);
-      ctx.fill();
-      ctx.restore();
-    }
-    ctx.fillStyle = 'rgb(200,90,130)';
-    ctx.beginPath();
-    ctx.arc(0, 0, 2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  // Ominaeshi: tall stems topped with flat sprays of tiny yellow flowers.
-  for (let i = 0; i < 4; i++) {
-    const x = q + q * (0.15 + 0.7 * (i + rnd() * 0.6) / 4);
-    const [hx, hy] = stem(x, q * 2 - 2, q + q * (0.1 + rnd() * 0.15), (rnd() - 0.5) * 16);
-    ctx.fillStyle = 'rgb(240,210,50)';
-    for (let d = 0; d < 60; d++) {
-      const a = rnd() * Math.PI * 2;
-      const r = Math.sqrt(rnd()) * 16;
-      ctx.beginPath();
-      ctx.arc(hx + Math.cos(a) * r, hy + Math.sin(a) * r * 0.35, 1.6, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  // Susuki: arching leaves and silky plumes bending with the wind.
-  {
-    const ox = q * 2;
-    ctx.strokeStyle = 'rgb(110,130,70)';
-    ctx.lineWidth = 2.2;
-    for (let i = 0; i < 14; i++) {
-      const x = ox + q * 0.5 + (rnd() - 0.5) * 30;
-      const lean = (rnd() - 0.5) * 220;
-      ctx.beginPath();
-      ctx.moveTo(x, q * 2);
-      ctx.quadraticCurveTo(x + lean * 0.2, q * 1.3, x + lean * 0.5, q * 1.2 + rnd() * 90);
-      ctx.stroke();
-    }
-    for (let i = 0; i < 5; i++) {
-      const x = ox + q * 0.5 + (i - 2) * 12 + (rnd() - 0.5) * 8;
-      const tx = x + 30 + rnd() * 30;
-      const ty = q + 20 + rnd() * 40;
-      ctx.strokeStyle = 'rgb(150,140,100)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(x, q * 2);
-      ctx.quadraticCurveTo(x, ty + 60, tx, ty);
-      ctx.stroke();
-      // plume: many fine hairs sweeping down to one side
-      for (let h = 0; h < 40; h++) {
-        const t2 = rnd();
-        const sx = tx - 10 * t2;
-        const sy = ty + t2 * 50;
-        ctx.strokeStyle = `rgba(${225 + rnd() * 20},${210 + rnd() * 20},${180 + rnd() * 20},0.9)`;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.quadraticCurveTo(sx + 10, sy + 6, sx + 14 + rnd() * 10, sy + 14 + rnd() * 10);
-        ctx.stroke();
-      }
-    }
-  }
-
-  // White clover: low round heads and three-part leaves.
-  {
-    const ox = q * 3;
-    for (let i = 0; i < 12; i++) {
-      const x = ox + 20 + rnd() * (q - 40);
-      const y = q * 2 - 10 - rnd() * 40;
-      ctx.fillStyle = 'rgb(70,120,50)';
-      for (let l = 0; l < 3; l++) {
-        ctx.beginPath();
-        ctx.arc(x + Math.cos(l * 2.1) * 5, y + Math.sin(l * 2.1) * 5, 5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-    for (let i = 0; i < 6; i++) {
-      const x = ox + 30 + rnd() * (q - 60);
-      const [hx, hy] = stem(x, q * 2 - 2, q * 2 - 70 - rnd() * 50, (rnd() - 0.5) * 10);
-      for (let d = 0; d < 36; d++) {
-        const a = rnd() * Math.PI * 2;
-        const r = Math.sqrt(rnd()) * 9;
-        ctx.fillStyle = rnd() < 0.2 ? 'rgb(235,200,210)' : 'rgb(250,248,240)';
-        ctx.beginPath();
-        ctx.ellipse(hx + Math.cos(a) * r, hy + Math.sin(a) * r, 1.6, 2.6, a, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-  }
-  const tex = new THREE.CanvasTexture(canvas);
+// Eight photographed grass tufts, four per row, each standing on the bottom of its cell.
+export function grassAtlas() {
+  const tex = loader.load(grassUrl);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
   return tex;

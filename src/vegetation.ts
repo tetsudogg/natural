@@ -6,7 +6,7 @@ import { HALF, clearingFactor, forestDensity, streamDist, streamX, WATERFALL_Z }
 import { groundHeight, groundSlope } from './terrain';
 import { fbm, mulberry32 } from './noise';
 import { NO_REFLECT_LAYER } from './water';
-import { fernTexture, flowerAtlas, foliageTexture, surface, FLOWER_KINDS, type FlowerKind } from './textures';
+import { fernTexture, flowerAtlas, foliageTexture, grassAtlas, surface, FLOWER_KINDS, type FlowerKind } from './textures';
 
 export const windUniforms = {
   uTime: { value: 0 },
@@ -21,7 +21,7 @@ export const srgb = (r: number, g: number, b: number) => new THREE.Color().setRG
 
 // Bends vertices sideways by height above the instance's base.
 // Foliage cards also keep their outward normals on both faces, so crowns shade like a volume.
-function addWind(mat: THREE.Material, amount: number, stiffness: number, foliage = false) {
+function addWind(mat: THREE.Material, amount: number, stiffness: number, foliage = false, flutter = false) {
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = windUniforms.uTime;
     shader.uniforms.uWind = windUniforms.uWind;
@@ -36,6 +36,9 @@ function addWind(mat: THREE.Material, amount: number, stiffness: number, foliage
           float bend = pow(h, ${stiffness.toFixed(2)}) * ${amount.toFixed(5)} * (0.4 + uWind);
           float t = uTime;
           float w = sin(t * 1.3 + ip.x * 0.05 + ip.z * 0.07) + 0.5 * sin(t * 2.7 + ip.x * 0.2);
+          ${flutter ? `// Each stem and card sways on its own beat, not the whole clump at once.
+          float own = position.x * 5.3 + position.z * 4.1 + ip.x * 0.7;
+          w = w * 0.55 + 0.6 * sin(t * (2.2 + fract(own) * 1.4) + own * 3.0) + 0.2 * sin(t * 5.1 + own * 7.0);` : ''}
           transformed.x += w * bend;
           transformed.z += 0.6 * cos(t * 1.1 + ip.z * 0.06) * bend;
           ${foliage ? 'transformed += normal * 0.06 * sin(t * 3.1 + position.x * 2.0 + ip.z) * (0.3 + uWind);' : ''}
@@ -246,55 +249,34 @@ function bushGeometry(): THREE.BufferGeometry {
   return mergeGeometries(cards)!;
 }
 
-// A clump of curved, tapered blades. Bases are dark, tips are light, and each blade
-// has its own tint so a meadow reads as many plants rather than one colour.
+// A grass clump: a few upright cards, each showing one photographed tuft from the
+// grass atlas, turned different ways so the clump looks full from every side.
 function grassClumpGeometry() {
   const rnd = mulberry32(8);
-  const verts: number[] = [];
-  const cols: number[] = [];
-  const idx: number[] = [];
-  const blades = 8;
-  const segs = 4;
-  for (let b = 0; b < blades; b++) {
-    const a = rnd() * Math.PI * 2;
-    const ox = (rnd() - 0.5) * 0.3;
-    const oz = (rnd() - 0.5) * 0.3;
-    const h = 0.55 + rnd() * 0.6;
-    const lean = 0.15 + rnd() * 0.35;
-    const w = 0.025 + rnd() * 0.02;
-    const c = Math.cos(a);
-    const s = Math.sin(a);
-    const tint = [0.9 + rnd() * 0.25, 0.9 + rnd() * 0.15, 0.8 + rnd() * 0.2];
-    if (rnd() < 0.15) tint[0] += 0.35; // an occasional dry, yellowed blade
-    const base = verts.length / 3;
-    for (let k = 0; k <= segs; k++) {
-      const t = k / segs;
-      const y = h * t;
-      const z = lean * t * t; // curves over toward the tip
-      const hw = k === segs ? 0 : w * (1 - t * 0.8);
-      for (const side of k === segs ? [0] : [-1, 1]) {
-        const x = side * hw;
-        verts.push(ox + x * c + z * s, y - lean * t * t * 0.3, oz - x * s + z * c);
-        const v = 0.28 + 0.72 * t;
-        cols.push(v * tint[0], v * tint[1], v * tint[2]);
-      }
+  const parts: THREE.BufferGeometry[] = [];
+  for (let c = 0; c < 7; c++) {
+    const h = 0.5 + rnd() * 0.5;
+    const g = new THREE.PlaneGeometry(h * 0.5, h, 1, 2);
+    g.translate((rnd() - 0.5) * 0.25, h / 2, 0);
+    g.rotateY(rnd() * Math.PI);
+    g.translate(0, 0, (rnd() - 0.5) * 0.25);
+    const cell = Math.floor(rnd() * 8);
+    const u0 = (cell % 4) * 0.25;
+    const v0 = cell < 4 ? 0.5 : 0; // row 0 of the image is the top of the texture
+    const uv = g.attributes.uv as THREE.BufferAttribute;
+    const cols = new Float32Array(uv.count * 3);
+    for (let k = 0; k < uv.count; k++) {
+      const t = uv.getY(k);
+      uv.setXY(k, u0 + uv.getX(k) * 0.25, v0 + t * 0.5);
+      cols.fill(0.7 + 0.3 * t, k * 3, k * 3 + 3); // darker where blades crowd at the base
     }
-    for (let k = 0; k < segs - 1; k++) {
-      const i0 = base + k * 2;
-      idx.push(i0, i0 + 1, i0 + 2, i0 + 2, i0 + 1, i0 + 3);
-    }
-    const last = base + (segs - 1) * 2;
-    idx.push(last, last + 1, last + 2);
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    // Point normals up so blades are lit like the ground and don't flicker dark.
+    const n = g.attributes.normal as THREE.BufferAttribute;
+    for (let k = 0; k < n.count; k++) n.setXYZ(k, 0, 1, 0);
+    parts.push(g);
   }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-  g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
-  g.setIndex(idx);
-  // Point normals up so blades are lit like the ground and don't flicker dark.
-  const normals = new Float32Array(verts.length);
-  for (let i = 1; i < normals.length; i += 3) normals[i] = 1;
-  g.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-  return g;
+  return mergeGeometries(parts)!;
 }
 
 // Rocks are textured with photos projected from three sides in world space
@@ -581,7 +563,7 @@ export function createVegetation() {
 
   // Grass
   const grass: Placement[] = [];
-  const grassCandidates = 520000;
+  const grassCandidates = 800000;
   for (let i = 0; i < grassCandidates; i++) {
     const x = (rnd() * 2 - 1) * (HALF - 3);
     const z = (rnd() * 2 - 1) * (HALF - 3);
@@ -597,10 +579,11 @@ export function createVegetation() {
       new THREE.Vector3(1, s, 1),
     );
     const dry = fbm(x * 0.05 + 3, z * 0.05 - 8, 2);
-    grass.push({ m, c: srgb(0.42, 0.56, 0.22).lerp(srgb(0.62, 0.6, 0.32), Math.max(0, dry - 0.45) * 1.5).multiplyScalar(0.85 + rnd() * 0.3) });
+    // The tuft photos carry the colour; instances only nudge it drier or brighter.
+    grass.push({ m, c: srgb(1, 1, 1).lerp(srgb(1.1, 1.0, 0.8), Math.max(0, dry - 0.45) * 1.5).multiplyScalar(0.9 + rnd() * 0.3) });
   }
-  const grassMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide });
-  addWind(grassMat, 0.12, 2, true);
+  const grassMat = new THREE.MeshStandardMaterial({ map: grassAtlas(), vertexColors: true, alphaTest: 0.45, roughness: 0.85, side: THREE.DoubleSide });
+  addWind(grassMat, 0.12, 2, true, true);
   const grassGroup = chunked(grassClumpGeometry(), grassMat, grass, 30, { maxDist: 90 });
   group.add(grassGroup);
 
@@ -669,7 +652,7 @@ export function createVegetation() {
     flowers[kind].push({ m, c: new THREE.Color().setHSL(0, 0, 0.85 + rnd() * 0.15, THREE.SRGBColorSpace) });
   }
   const flowerMat = new THREE.MeshStandardMaterial({ map: flowerAtlas(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.8 });
-  addWind(flowerMat, 0.25, 2, true);
+  addWind(flowerMat, 0.25, 2, true, true);
   const flowerGroups = flowers.map((list, k) => chunked(flowerGeometry(k as FlowerKind), flowerMat, list, 30, { maxDist: 75 }));
   group.add(...flowerGroups);
 
@@ -690,7 +673,7 @@ export function createVegetation() {
     ferns.push({ m, c: new THREE.Color().setHSL(0.26, 0.5, 0.4 + rnd() * 0.15, THREE.SRGBColorSpace) });
   }
   const fernMat = new THREE.MeshStandardMaterial({ map: fernTexture(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.85 });
-  addWind(fernMat, 0.08, 1.5, true);
+  addWind(fernMat, 0.08, 1.5, true, true);
   const fernGroup = chunked(fernGeometry(), fernMat, ferns, 30, { maxDist: 85, shadow: false });
   group.add(fernGroup);
 

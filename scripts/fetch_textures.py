@@ -8,11 +8,14 @@ so the game itself never downloads anything from Poly Haven.
 """
 
 import io
+import math
+import random
+import urllib.error
 import urllib.request
 from collections import deque
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 OUT = Path(__file__).resolve().parent.parent / "src" / "assets"
 BASE = "https://dl.polyhaven.org/file/ph-assets"
@@ -35,6 +38,7 @@ GRADE = {
     "grass": (8, 1.2, 1.0, (0.85, 1.05, 0.62)),
     "leaves": (14, 1.05, 1.3, (1.0, 1.0, 1.0)),
     "fern": (6, 1.1, 1.15, (1.0, 1.0, 1.0)),
+    "tufts": (-5, 1.2, 1.3, (0.95, 1.05, 0.9)),
 }
 
 
@@ -68,7 +72,11 @@ def save(img: Image.Image, name: str, size: tuple[int, int], quality: int):
 def cutouts(model: str, part: str, min_area: int):
     """Split a Poly Haven plant atlas into its separate leaves (RGBA, cropped)."""
     diff = fetch(f"Models/jpg/2k/{model}/{model}{part}_diff_2k.jpg").convert("RGB")
-    alpha = fetch(f"Models/jpg/2k/{model}/{model}{part}_alpha_2k.jpg").convert("L")
+    try:
+        alpha = fetch(f"Models/jpg/2k/{model}/{model}{part}_alpha_2k.jpg").convert("L")
+    except urllib.error.HTTPError:
+        # A few atlases have no alpha map and sit on black instead.
+        alpha = diff.convert("L").point(lambda v: 255 if v > 14 else 0)
     diff.putalpha(alpha)
     # Find connected pieces on a quarter-size mask.
     small = alpha.resize((alpha.width // 4, alpha.height // 4))
@@ -132,6 +140,121 @@ def fern():
     print("fern.webp", (OUT / "fern.webp").stat().st_size // 1024, "KB")
 
 
+def recolor(img: Image.Image, dh: float, ds: float, dv: float) -> Image.Image:
+    alpha = img.getchannel("A")
+    h, s, v = img.convert("RGB").convert("HSV").split()
+    h = h.point(lambda x: (x + round(dh * 256 / 360)) % 256)
+    s = s.point(lambda x: min(255, round(x * ds)))
+    v = v.point(lambda x: min(255, round(x * dv)))
+    out = Image.merge("HSV", (h, s, v)).convert("RGB")
+    out.putalpha(alpha)
+    return out
+
+
+def paste(cell: Image.Image, piece: Image.Image, cx: float, cy: float, size: float, angle: float = 0):
+    """Paste a cutout so its longest side is `size` px, centred on (cx, cy)."""
+    p = piece.copy()
+    k = size / max(p.size)
+    p = p.resize((max(1, round(p.width * k)), max(1, round(p.height * k))), Image.LANCZOS)
+    if angle:
+        p = p.rotate(angle, expand=True, resample=Image.BICUBIC)
+    cell.alpha_composite(p, (round(cx - p.width / 2), round(cy - p.height / 2)))
+
+
+def stem(draw: ImageDraw.ImageDraw, x0: float, y0: float, x1: float, y1: float, bend: float, width: int = 3):
+    pts = []
+    for i in range(13):
+        t = i / 12
+        pts.append((x0 + (x1 - x0) * t + math.sin(t * math.pi) * bend, y0 + (y1 - y0) * t))
+    draw.line(pts, fill=(78, 108, 46, 255), width=width, joint="curve")
+
+
+def plants():
+    """Grass tufts (grass.webp, 8 cells of 256x512) and wildflowers (flowers.webp,
+    8 cells of 256x256), all assembled from photographed plant parts."""
+    tufts, tb = cutouts("grass_bermuda_01", "", 9)
+    grass = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
+    for i, k in enumerate((0, 1, 4, 5, 11, 12, 13, 14)):
+        t = tufts.crop(tb[k][:4])
+        t.thumbnail((250, 500), Image.LANCZOS)
+        grass.alpha_composite(t, ((i % 4) * 256 + (256 - t.width) // 2, (i // 4) * 512 + 512 - t.height))
+    grass = grade(grass, "tufts")
+    grass.save(OUT / "grass.webp", "WEBP", quality=85, method=6)
+    print("grass.webp", (OUT / "grass.webp").stat().st_size // 1024, "KB")
+
+    def parts(model, idx):
+        img, boxes = cutouts(model, "", 9)
+        return [img.crop(boxes[i][:4]) for i in idx]
+
+    daisy, = parts("flower_ursinia", (6,))
+    buttercups = parts("celandine_01", (5, 6, 7))
+    dandelions = parts("dandelion_01", (0, 1))
+    dleaves = parts("dandelion_01", (5, 13))
+    peri = parts("periwinkle_plant", (10, 15))
+    small_leaves = parts("periwinkle_plant", (2, 3, 5, 6, 16))
+    clover = parts("shrub_sorrel_01", (0, 1, 4))
+    petals = parts("shrub_sorrel_01", (5, 6, 7, 8, 9))
+    blades = parts("grass_medium_02", (0, 3, 6, 7))
+    white = recolor(daisy, 0, 0.08, 1.35)
+    heads = {
+        0: [white],
+        1: buttercups,
+        2: [recolor(p, -50, 0.9, 0.9) for p in peri],
+        3: [recolor(p, -95, 1.0, 1.0) for p in peri],
+        4: peri,
+        5: dandelions,
+    }
+    size = {0: 58, 1: 44, 2: 50, 3: 44, 4: 54, 5: 60}
+    rnd = random.Random(5)
+    sheet = Image.new("RGBA", (1024, 512), (0, 0, 0, 0))
+    for kind in range(8):
+        cell = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+        d = ImageDraw.Draw(cell)
+        if kind in heads:
+            n = 3 if kind != 5 else 2
+            if kind == 5:
+                for j, lf in enumerate(dleaves):
+                    paste(cell, lf, 128 + (j - 0.5) * 70, 225, 110, 90 * (1 if j else -1) + rnd.uniform(-25, 25))
+            for j in range(n):
+                x = 128 + (j - (n - 1) / 2) * 62 + rnd.uniform(-12, 12)
+                y = 40 + rnd.uniform(0, 45)
+                stem(d, 128 + rnd.uniform(-10, 10), 256, x, y, rnd.uniform(-18, 18))
+                if kind != 5:
+                    for _ in range(2):
+                        ly = rnd.uniform(y + 60, 230)
+                        paste(cell, rnd.choice(small_leaves), x + rnd.choice((-16, 16)), ly, 34, rnd.uniform(-60, 60))
+                paste(cell, rnd.choice(heads[kind]), x, y, size[kind] * rnd.uniform(0.85, 1.1), rnd.uniform(-20, 20))
+        elif kind == 6:
+            # Silver grass: long blades with pale, feathery plumes.
+            for j, b in enumerate(blades):
+                paste(cell, b, 100 + j * 18, 150, 210, rnd.uniform(-12, 12))
+            for j in range(4):
+                x = 90 + j * 25 + rnd.uniform(-5, 5)
+                stem(d, 128, 256, x, 30, rnd.uniform(-10, 10), 2)
+                for f in range(26):
+                    t = f / 26
+                    fy = 30 + t * 70
+                    ang = rnd.uniform(-0.5, 0.5) + (0.4 if f % 2 else -0.4)
+                    L = 26 * (1 - t * 0.5)
+                    d.line([(x, fy), (x + math.sin(ang) * L, fy + math.cos(ang) * L * 0.6)], fill=(232, 226, 210, 230), width=2)
+        else:
+            # Clover: a low carpet of three-part leaves and a few pink flowers.
+            for j in range(9):
+                paste(cell, rnd.choice(clover), rnd.uniform(40, 216), rnd.uniform(170, 235), rnd.uniform(46, 64), rnd.uniform(0, 360))
+            for j in range(3):
+                x = 60 + j * 68 + rnd.uniform(-10, 10)
+                y = rnd.uniform(110, 140)
+                stem(d, x, 240, x + rnd.uniform(-8, 8), y, rnd.uniform(-6, 6), 2)
+                for q in range(5):
+                    a = q * 72 + rnd.uniform(-8, 8)
+                    rx = x + math.sin(math.radians(a)) * 9
+                    ry = y - math.cos(math.radians(a)) * 9
+                    paste(cell, petals[q], rx, ry, 22, -a + 180)
+        sheet.alpha_composite(cell, ((kind % 4) * 256, (kind // 4) * 256))
+    sheet.save(OUT / "flowers.webp", "WEBP", quality=88, method=6)
+    print("flowers.webp", (OUT / "flowers.webp").stat().st_size // 1024, "KB")
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     for name, ph in SURFACES.items():
@@ -149,6 +272,7 @@ def main():
         save(fetch(f"Textures/jpg/1k/{nor_src}/{nor_src}_nor_gl_1k.jpg").convert("RGB"), f"{name}_nor.webp", (512, 512), 85)
     leaf_atlas()
     fern()
+    plants()
 
 
 if __name__ == "__main__":

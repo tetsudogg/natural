@@ -4,6 +4,7 @@ import { createPost, QUALITY_LABEL, QUALITY_PIXEL_RATIO, type Quality } from './
 import { createTerrain } from './terrain';
 import { createVegetation, updateDistanceCulling, windUniforms } from './vegetation';
 import { createStream, createFireflies, NO_REFLECT_LAYER } from './water';
+import { createWildlife } from './wildlife';
 import { createSky } from './sky';
 import { Player, type ViewMode } from './player';
 import { Soundscape } from './audio';
@@ -87,6 +88,8 @@ async function main() {
   scene.add(stream.mesh);
   const fireflies = createFireflies();
   scene.add(fireflies.points);
+  const wildlife = createWildlife();
+  scene.add(wildlife.group);
   const clouds = createClouds();
   scene.add(clouds.mesh);
 
@@ -313,6 +316,7 @@ async function main() {
     const day = sky.update(hour, player.position);
     stream.update(elapsed, day.sunDir, day.sunColor, day.sunIntensity, day.daylight);
     fireflies.update(elapsed, day.night);
+    wildlife.update(elapsed, dt, day.daylight, player.position);
     clouds.update(elapsed, player.position, day.sunDir, day.sunColor, day.daylight, day.night, day.fogColor);
     for (const g of veg.cullGroups) updateDistanceCulling(g, camera.position);
     sound.update(dt, camera, day.daylight, day.night, hour);
