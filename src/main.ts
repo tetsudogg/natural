@@ -96,7 +96,7 @@ async function main() {
   scene.add(clouds.mesh);
 
   const saved = loadSave();
-  const campfire = createCampfire(saved?.campfire);
+  const campfire = createCampfire(saved?.campfire, veg.treeSpots);
   scene.add(campfire.group, campfire.light);
   const post = createPost(renderer);
   // ?quality=low|medium|high overrides the saved choice (handy for testing).

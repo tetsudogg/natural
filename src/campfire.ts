@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { HALF, forestDensity, streamDist } from './world';
+import { HALF, streamDist } from './world';
 import { groundHeight, groundSlope } from './terrain';
 import { mulberry32 } from './noise';
 import { surface } from './textures';
@@ -20,15 +20,15 @@ const EMBER_HOURS = 1; // embers glow this long after the flames die
 function branchGeometry(seed: number) {
   const rnd = mulberry32(seed);
   const parts: THREE.BufferGeometry[] = [];
-  const len = 0.9 + rnd() * 0.6;
-  const main = new THREE.CylinderGeometry(0.018, 0.03, len, 6, 4);
+  const len = 1.0 + rnd() * 0.7;
+  const main = new THREE.CylinderGeometry(0.03, 0.05, len, 7, 5);
   main.rotateZ(Math.PI / 2);
   const p = main.attributes.position as THREE.BufferAttribute;
   for (let i = 0; i < p.count; i++) p.setZ(i, p.getZ(i) + Math.sin(p.getX(i) * 3 + seed) * 0.04);
   parts.push(main);
-  for (let t = 0; t < 1 + Math.floor(rnd() * 2); t++) {
-    const tl = 0.2 + rnd() * 0.25;
-    const twig = new THREE.CylinderGeometry(0.007, 0.012, tl, 5);
+  for (let t = 0; t < 2 + Math.floor(rnd() * 2); t++) {
+    const tl = 0.25 + rnd() * 0.3;
+    const twig = new THREE.CylinderGeometry(0.01, 0.02, tl, 5);
     twig.translate(0, tl / 2, 0);
     twig.rotateZ(-Math.PI / 2 + 0.6 + rnd() * 0.4);
     twig.rotateY((rnd() - 0.5) * 1.2);
@@ -36,7 +36,7 @@ function branchGeometry(seed: number) {
     parts.push(twig);
   }
   const g = mergeGeometries(parts.map((x) => x.toNonIndexed()))!;
-  g.translate(0, 0.025, 0);
+  g.translate(0, 0.04, 0);
   return g;
 }
 
@@ -46,27 +46,38 @@ interface Branch {
   taken: boolean;
 }
 
-function createBranches(barkMat: THREE.Material) {
+// Branches have fallen from the trees, so they lie around each trunk.
+function createBranches(barkMat: THREE.Material, trees: { x: number; z: number }[]) {
   const rnd = mulberry32(404);
   const list: Branch[] = [];
-  for (let tries = 0; list.length < 900 && tries < 20000; tries++) {
-    const x = (rnd() * 2 - 1) * (HALF - 10);
-    const z = (rnd() * 2 - 1) * (HALF - 10);
-    const f = forestDensity(x, z);
-    if (rnd() > f * f || streamDist(x, z) < 6) continue;
-    list.push({ x, z, taken: false });
+  for (const t of trees) {
+    const n = 2 + Math.floor(rnd() * 4);
+    for (let j = 0; j < n; j++) {
+      const a = rnd() * Math.PI * 2;
+      const r = 0.9 + Math.pow(rnd(), 1.5) * 3;
+      const x = t.x + Math.cos(a) * r;
+      const z = t.z + Math.sin(a) * r;
+      if (Math.abs(x) > HALF - 6 || Math.abs(z) > HALF - 6 || streamDist(x, z) < 6 || groundSlope(x, z) > 0.8) continue;
+      list.push({ x, z, taken: false });
+    }
   }
-  const kinds = [branchGeometry(1), branchGeometry(2), branchGeometry(3)];
+  const kinds = [branchGeometry(1), branchGeometry(2), branchGeometry(3), branchGeometry(4)];
   const meshes = kinds.map((g) => new THREE.InstancedMesh(g, barkMat, list.length));
   const slot: { mesh: number; index: number }[] = [];
-  const counts = [0, 0, 0];
+  const counts = [0, 0, 0, 0];
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const e = new THREE.Euler();
+  const col = new THREE.Color();
+  const shades: number[] = [];
+  let glowing = -1;
   list.forEach((b, i) => {
-    const k = i % 3;
+    const k = i % 4;
     const y = groundHeight(b.x, b.z);
-    q.setFromEuler(e.set((rnd() - 0.5) * 0.15, rnd() * Math.PI * 2, (rnd() - 0.5) * 0.15));
+    q.setFromEuler(e.set((rnd() - 0.5) * 0.12, rnd() * Math.PI * 2, (rnd() - 0.5) * 0.12));
+    const shade = 0.8 + rnd() * 0.35;
+    shades.push(shade);
+    meshes[k].setColorAt(counts[k], col.setRGB(shade, shade, shade));
     meshes[k].setMatrixAt(counts[k], m.compose(new THREE.Vector3(b.x, y, b.z), q, new THREE.Vector3(1, 1, 1).multiplyScalar(0.85 + rnd() * 0.4)));
     slot.push({ mesh: k, index: counts[k]++ });
   });
@@ -95,6 +106,17 @@ function createBranches(barkMat: THREE.Material) {
         }
       }
       return best;
+    },
+    // Brighten the branch E would pick up, so it is easy to spot in the grass.
+    highlight(i: number) {
+      if (i === glowing) return;
+      for (const [j, c] of [[glowing, 1], [i, 1.9]] as const) {
+        if (j < 0) continue;
+        const s = slot[j];
+        meshes[s.mesh].setColorAt(s.index, col.setRGB(shades[j] * c, shades[j] * c * 0.97, shades[j] * c * 0.9));
+        meshes[s.mesh].instanceColor!.needsUpdate = true;
+      }
+      glowing = i;
     },
     take(i: number) {
       list[i].taken = true;
@@ -355,10 +377,10 @@ export interface CampfireSave {
   fire: FireState | null;
 }
 
-export function createCampfire(saved: CampfireSave | undefined) {
+export function createCampfire(saved: CampfireSave | undefined, trees: { x: number; z: number }[]) {
   const bark = surface('bark');
-  const branchMat = new THREE.MeshStandardMaterial({ map: bark.map, color: 0x9a8a78, roughness: 0.95 });
-  const branches = createBranches(branchMat);
+  const branchMat = new THREE.MeshStandardMaterial({ map: bark.map, color: 0xc4b6a2, roughness: 0.95 });
+  const branches = createBranches(branchMat, trees);
   const pit = createFirePit();
   pit.group.visible = false;
   const group = new THREE.Group();
@@ -414,7 +436,9 @@ export function createCampfire(saved: CampfireSave | undefined) {
         if (pack > 0 && fire.fuel < FIRE_MAX_FUEL - HOURS_PER_BRANCH) return 'E：枝をくべる';
         if (pack === 0) return null;
       }
-      if (pack < PACK_MAX && branches.nearest(pos, 2.2) >= 0) return 'E：枝を拾う';
+      const near = pack < PACK_MAX ? branches.nearest(pos, 2.2) : -1;
+      branches.highlight(near);
+      if (near >= 0) return 'E：枝を拾う';
       if (pack >= BRANCHES_TO_BUILD && !(fire && fire.fuel > 0)) return 'B：焚き火を組む';
       return null;
     },
