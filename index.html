@@ -19,6 +19,7 @@
           <li><kbd>W A S D</kbd> 歩く　<kbd>Shift</kbd> 走る　マウスで見回す</li>
           <li><kbd>C</kbd> 一人称／三人称　<kbd>V</kbd> 眺めモード　<kbd>F</kbd> 全画面</li>
           <li><kbd>T</kbd> 時間の速さ　<kbd>Q</kbd> 画質　<kbd>H</kbd> 操作の表示</li>
+          <li><kbd>E</kbd> 枝を拾う／くべる　<kbd>B</kbd> 焚き火を組む（枝 5 本）</li>
         </ul>
         <p class="note">音が出ます。ヘッドホンがおすすめです。</p>
       </div>
@@ -32,12 +33,14 @@
 
     <div id="hud">
       <div id="help" class="help">
-        <kbd>WASD</kbd> 歩く　<kbd>Shift</kbd> 走る　<kbd>C</kbd> 視点　<kbd>V</kbd> 眺めモード　<kbd>F</kbd> 全画面　<kbd>T</kbd> 時間　<kbd>Q</kbd> 画質　<kbd>H</kbd> 隠す
+        <kbd>WASD</kbd> 歩く　<kbd>Shift</kbd> 走る　<kbd>C</kbd> 視点　<kbd>V</kbd> 眺めモード　<kbd>F</kbd> 全画面　<kbd>E</kbd> 拾う　<kbd>B</kbd> 焚き火　<kbd>T</kbd> 時間　<kbd>Q</kbd> 画質　<kbd>H</kbd> 隠す
       </div>
       <button id="view-btn" type="button" title="眺めモード (V)">眺める</button>
     </div>
 
     <div id="toast" aria-live="polite"></div>
+    <div id="hint"></div>
+    <div id="pack"></div>
 
     <script type="module" src="./src/main.ts"></script>
   </body>

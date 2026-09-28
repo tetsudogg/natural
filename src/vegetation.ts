@@ -14,6 +14,8 @@ export const windUniforms = {
   // Sun direction in view space and its colour, for light shining through leaves.
   uSunView: { value: new THREE.Vector3(0, 1, 0) },
   uSunColor: { value: new THREE.Color(1, 1, 1) },
+  // Plants inside this circle (x, z, radius) are hidden, e.g. under a campfire.
+  uClear: { value: new THREE.Vector3(0, 0, 0) },
 };
 
 // Colours are written as they look on screen (sRGB) and converted for lighting.
@@ -46,8 +48,9 @@ function addWind(mat: THREE.Material, o: WindOptions) {
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = windUniforms.uTime;
     shader.uniforms.uWind = windUniforms.uWind;
+    shader.uniforms.uClear = windUniforms.uClear;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\nuniform float uTime;\nuniform float uWind;\n${WIND_NOISE}`)
+      .replace('#include <common>', `#include <common>\nuniform float uTime;\nuniform float uWind;\nuniform vec3 uClear;\n${WIND_NOISE}`)
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
@@ -72,6 +75,7 @@ function addWind(mat: THREE.Material, o: WindOptions) {
           transformed.z += (wdir.y * (gust * 0.8 + sway * 0.9) + wdir.x * cross * 0.6) * amt;
           ${o.foliage ? `// Leaves tremble a little, more toward the tip.
           transformed += normal * ${(o.amount * 0.08).toFixed(4)} * k * (wNoise(vec2(t * 2.5 + position.x * 1.7, position.z * 1.3 + ip.z)) - 0.5) * (0.3 + uWind);` : ''}
+          ${o.height < 5 ? '// Cleared ground (a campfire) has no small plants.\n          transformed *= step(uClear.z, distance(ip.xz, uClear.xy));' : ''}
         }`,
       );
     if (o.foliage) {

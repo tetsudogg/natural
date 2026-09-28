@@ -23,6 +23,9 @@ export class Soundscape {
   private nextGust = 0;
   private nextBabble = 0;
   private listenerPos = new THREE.Vector3();
+  private firePanner: PannerNode | null = null;
+  private fireGain!: GainNode;
+  private nextCrackle = 0;
 
   get started() {
     return this.ctx !== null;
@@ -251,6 +254,40 @@ export class Soundscape {
     g.gain.exponentialRampToValueAtTime(0.001, t + (ground === 'gravel' ? 0.16 : 0.12));
     src.connect(f).connect(g).connect(this.master);
     src.start(t, Math.random() * 3, 0.2);
+  }
+
+  // A burning campfire: a low breathy roar plus random crackles and pops.
+  fire(pos: THREE.Vector3 | null, power: number) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    if (!this.firePanner) {
+      this.firePanner = this.panner(2, 1.3);
+      this.fireGain = ctx.createGain();
+      this.fireGain.gain.value = 0;
+      this.fireGain.connect(this.firePanner);
+      this.noiseSource(this.filter('lowpass', 520, 0.5), this.fireGain, null);
+    }
+    if (!pos || power < 0.01) {
+      this.fireGain.gain.setTargetAtTime(0, now, 0.8);
+      return;
+    }
+    this.setPos(this.firePanner, pos.x, pos.y + 0.4, pos.z);
+    this.fireGain.gain.setTargetAtTime(power * (0.28 + Math.random() * 0.12), now, 0.15);
+    if (now < this.nextCrackle) return;
+    this.nextCrackle = now + (0.03 + Math.random() * (Math.random() < 0.3 ? 0.6 : 0.18)) / (0.3 + power);
+    // Each crackle is a tiny burst of filtered noise; now and then a louder pop.
+    const pop = Math.random() < 0.08;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const f = this.filter('bandpass', pop ? 900 + Math.random() * 700 : 1800 + Math.random() * 3500, pop ? 1.2 : 2.5);
+    const g = ctx.createGain();
+    const vol = power * (pop ? 0.9 : 0.15 + Math.random() * 0.3);
+    const len = pop ? 0.06 : 0.008 + Math.random() * 0.025;
+    g.gain.setValueAtTime(vol, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + len);
+    src.connect(f).connect(g).connect(this.firePanner);
+    src.start(now, Math.random() * 3, len + 0.02);
   }
 
   setVolume(v: number) {

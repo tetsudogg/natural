@@ -181,6 +181,41 @@ kbd {
   opacity: 1;
 }
 
+#hint {
+  position: fixed;
+  left: 50%;
+  top: 70%;
+  transform: translateX(-50%);
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  background: var(--veil);
+  border-radius: 999px;
+  padding: 6px 16px;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
+#hint.show {
+  opacity: 1;
+}
+
+#pack {
+  position: fixed;
+  right: 20px;
+  top: 20px;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  pointer-events: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+body.viewing #pack {
+  display: none;
+}
+
 body.viewing {
   cursor: none;
 }

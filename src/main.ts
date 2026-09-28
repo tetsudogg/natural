@@ -5,6 +5,7 @@ import { createTerrain } from './terrain';
 import { createVegetation, updateDistanceCulling, windUniforms } from './vegetation';
 import { createStream, createFireflies, NO_REFLECT_LAYER } from './water';
 import { createWildlife } from './wildlife';
+import { createCampfire, type CampfireSave } from './campfire';
 import { createSky } from './sky';
 import { Player, type ViewMode } from './player';
 import { Soundscape } from './audio';
@@ -30,6 +31,7 @@ interface Save {
   view: ViewMode;
   speed: number;
   quality?: Quality;
+  campfire?: CampfireSave;
 }
 
 const SAVE_KEY = 'natural.save.v1';
@@ -94,6 +96,8 @@ async function main() {
   scene.add(clouds.mesh);
 
   const saved = loadSave();
+  const campfire = createCampfire(saved?.campfire);
+  scene.add(campfire.group, campfire.light);
   const post = createPost(renderer);
   // ?quality=low|medium|high overrides the saved choice (handy for testing).
   const qParam = new URLSearchParams(location.search).get('quality') as Quality | null;
@@ -113,6 +117,12 @@ async function main() {
 
   let hour = saved?.hour ?? 6.4;
   let speedIndex = saved?.speed ?? 0;
+  // ?campfire=now lights a fire just ahead (for testing).
+  if (new URLSearchParams(location.search).get('campfire') === 'now') {
+    campfire.debugGive(8);
+    toast(campfire.build(player.position, player.yaw));
+    campfire.debugBlaze();
+  }
 
   const sound = new Soundscape();
   player.onStep = (ground, running) => sound.footstep(ground, running);
@@ -249,6 +259,16 @@ async function main() {
       case 'KeyH':
         help.classList.toggle('off');
         return;
+      case 'KeyE': {
+        if (viewing) return;
+        const msg = campfire.interact(player.position);
+        if (msg) toast(msg);
+        return;
+      }
+      case 'KeyB':
+        if (viewing) return;
+        toast(campfire.build(player.position, player.yaw));
+        return;
       case 'KeyQ':
         quality = QUALITIES[(QUALITIES.indexOf(quality) + 1) % QUALITIES.length];
         applyQuality();
@@ -269,13 +289,16 @@ async function main() {
   });
 
   const save = () =>
-    writeSave({ x: player.position.x, z: player.position.z, yaw: player.yaw, pitch: player.pitch, hour, view: player.view, speed: speedIndex, quality });
+    writeSave({ x: player.position.x, z: player.position.z, yaw: player.yaw, pitch: player.pitch, hour, view: player.view, speed: speedIndex, quality, campfire: campfire.save() });
   setInterval(() => started && save(), 5000);
   window.addEventListener('beforeunload', () => started && save());
 
   // ?frames=N stops drawing after N frames (used for automated screenshots).
   const frameLimit = Number(new URLSearchParams(location.search).get('frames')) || Infinity;
   let frames = 0;
+  let hintTick = 0;
+  const hintEl = $('hint');
+  const packEl = $('pack');
   const timer = new THREE.Timer();
   timer.connect(document);
   let elapsed = 0;
@@ -318,6 +341,16 @@ async function main() {
     fireflies.update(elapsed, day.night);
     wildlife.update(elapsed, dt, day.daylight, player.position, camera);
     clouds.update(elapsed, player.position, day.sunDir, day.sunColor, day.daylight, day.night, day.fogColor);
+    campfire.update(elapsed, dt, dt * TIME_SPEEDS[speedIndex].hoursPerSecond, camera, windUniforms.uWind.value, day.daylight);
+    const fp = campfire.clearing;
+    windUniforms.uClear.value.set(fp ? fp.x : 0, fp ? fp.z : 0, fp ? 1.25 : 0);
+    sound.fire(campfire.firePosition, campfire.power);
+    if (++hintTick % 10 === 0) {
+      const h = viewing ? null : campfire.hint(player.position);
+      hintEl.textContent = h ?? '';
+      hintEl.classList.toggle('show', !!h);
+      packEl.textContent = campfire.pack > 0 ? `枝 ${campfire.pack} 本` : '';
+    }
     for (const g of veg.cullGroups) updateDistanceCulling(g, camera.position);
     sound.update(dt, camera, day.daylight, day.night, hour);
 
