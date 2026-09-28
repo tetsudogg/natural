@@ -316,7 +316,7 @@ async function main() {
     const day = sky.update(hour, player.position);
     stream.update(elapsed, day.sunDir, day.sunColor, day.sunIntensity, day.daylight);
     fireflies.update(elapsed, day.night);
-    wildlife.update(elapsed, dt, day.daylight, player.position);
+    wildlife.update(elapsed, dt, day.daylight, player.position, camera);
     clouds.update(elapsed, player.position, day.sunDir, day.sunColor, day.daylight, day.night, day.fogColor);
     for (const g of veg.cullGroups) updateDistanceCulling(g, camera.position);
     sound.update(dt, camera, day.daylight, day.night, hour);

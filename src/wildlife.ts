@@ -1,8 +1,11 @@
 // Small animals that make the valley feel lived in: fish holding in the current,
-// butterflies over the meadows, and now and then a flock of birds or a soaring hawk.
+// butterflies over the meadows, now and then a flock of birds or a soaring hawk,
+// and a fox that sometimes trots along the edge of the forest.
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import foxUrl from './assets/fox.glb?url';
 import { HALF, clearingFactor, forestDensity, streamDist, streamX, waterLevel } from './world';
 import { groundHeight } from './terrain';
 import { mulberry32 } from './noise';
@@ -265,7 +268,7 @@ function createBirds(rnd: () => number) {
   const zero = new THREE.Matrix4().makeScale(0, 0, 0);
   const origin = new THREE.Vector3();
   const scale = new THREE.Vector3();
-  let nextFlock = 20 + rnd() * 30;
+  let nextFlock = SHOW_NOW ? 0 : 20 + rnd() * 30;
   let nextHawk = 60 + rnd() * 60;
 
   function spawnFlock(near: THREE.Vector3) {
@@ -343,17 +346,135 @@ function createBirds(rnd: () => number) {
   };
 }
 
+// ---------- Fox ----------
+// Model: "Fox" from the Khronos glTF sample assets. Mesh by PixelMannen (CC0),
+// rigging and animation by tomkranis (CC BY 4.0), glTF by @AsoboStudio and @scurest (CC BY 4.0).
+
+// ?wildlife=now brings the fox and a flock of birds out right away (for checking).
+const SHOW_NOW = new URLSearchParams(location.search).get('wildlife') === 'now';
+
+function createFox(rnd: () => number) {
+  const root = new THREE.Group();
+  root.visible = false;
+  let mixer: THREE.AnimationMixer | null = null;
+  const actions: Record<string, THREE.AnimationAction> = {};
+  let current = '';
+  new GLTFLoader().load(foxUrl, (gltf) => {
+    const model = gltf.scene;
+    // The model is in centimetre-like units and faces +z: scale it to a real fox,
+    // about 45 cm at the shoulder.
+    model.scale.setScalar(0.0072);
+    model.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) {
+        o.castShadow = true;
+        const mesh = o as THREE.SkinnedMesh;
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        mat.roughness = 0.9;
+        mat.metalness = 0;
+        mesh.frustumCulled = false;
+      }
+    });
+    root.add(model);
+    mixer = new THREE.AnimationMixer(model);
+    for (const clip of gltf.animations) actions[clip.name] = mixer.clipAction(clip);
+  });
+  function play(name: string) {
+    if (current === name || !actions[name]) return;
+    const next = actions[name];
+    next.reset().play();
+    if (current) actions[current].crossFadeTo(next, 0.4, false);
+    current = name;
+  }
+
+  // A visit: appear some way off, trot along a path, stop to look around, trot on.
+  let wait = SHOW_NOW ? 0 : 40 + rnd() * 60;
+  let active = false;
+  const pos = new THREE.Vector3();
+  const dir = new THREE.Vector3();
+  let pause = 0;
+  let pausedOnce = false;
+  let travelled = 0;
+  let pathLength = 0;
+
+  function start(viewer: THREE.Vector3, viewDir: THREE.Vector3) {
+    // Somewhere in front of the viewer, off to one side, walking across the view.
+    const side = rnd() < 0.5 ? -1 : 1;
+    const ahead = SHOW_NOW ? 10 : 18 + rnd() * 18;
+    const across = new THREE.Vector3(-viewDir.z, 0, viewDir.x).multiplyScalar(side);
+    pos.copy(viewer).addScaledVector(viewDir, ahead).addScaledVector(across, SHOW_NOW ? 3 : 14 + rnd() * 6);
+    if (streamDist(pos.x, pos.z) < 6) return false;
+    dir.copy(across).negate().addScaledVector(viewDir, (rnd() - 0.5) * 0.6).setY(0).normalize();
+    active = true;
+    pause = 0;
+    pausedOnce = false;
+    travelled = 0;
+    pathLength = 30 + rnd() * 20;
+    root.visible = true;
+    play('Walk');
+    return true;
+  }
+
+  const viewDir = new THREE.Vector3();
+  return {
+    root,
+    update(dt: number, daylight: number, viewer: THREE.Vector3, camera: THREE.Camera) {
+      if (!mixer) return;
+      if (!active) {
+        root.visible = false;
+        if (daylight < 0.15) return;
+        wait -= dt;
+        if (wait > 0) return;
+        camera.getWorldDirection(viewDir).setY(0).normalize();
+        if (!start(viewer, viewDir)) {
+          wait = 5;
+          return;
+        }
+      }
+      mixer.update(dt);
+      if (pause > 0) {
+        pause -= dt;
+        play('Survey');
+      } else {
+        // Halfway along it stops once to look around.
+        if (!pausedOnce && travelled > pathLength * 0.45 && rnd() < dt * 0.8) {
+          pausedOnce = true;
+          pause = 3 + rnd() * 4;
+        }
+        // Trots off faster on the way out.
+        const speed = travelled > pathLength * 0.7 ? 3.2 : 1.1;
+        play(speed > 2 ? 'Run' : 'Walk');
+        // Steer around the stream and gently wander.
+        const ahead = pos.clone().addScaledVector(dir, 4);
+        if (streamDist(ahead.x, ahead.z) < 6) dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), dt * 1.5);
+        dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.sin(travelled * 0.3) * dt * 0.3);
+        pos.addScaledVector(dir, speed * dt);
+        travelled += speed * dt;
+      }
+      pos.y = groundHeight(pos.x, pos.z);
+      root.position.copy(pos);
+      root.rotation.y = Math.atan2(dir.x, dir.z);
+      if (travelled > pathLength + 25 || Math.abs(pos.x) > HALF - 5 || Math.abs(pos.z) > HALF - 5) {
+        active = false;
+        root.visible = false;
+        wait = 90 + rnd() * 120;
+      }
+    },
+  };
+}
+
 export function createWildlife() {
   const rnd = mulberry32(99);
   const fish = createFish(rnd);
   const butterflies = createButterflies(rnd);
   const birds = createBirds(rnd);
+  const fox = createFox(rnd);
   const group = new THREE.Group();
-  group.add(fish.mesh, butterflies.mesh, birds.mesh);
+  group.add(fish.mesh, butterflies.mesh, birds.mesh, fox.root);
   return {
     group,
-    update(time: number, dt: number, daylight: number, viewer: THREE.Vector3) {
+    update(time: number, dt: number, daylight: number, viewer: THREE.Vector3, camera: THREE.Camera) {
       fish.update(time, dt);
+      fox.update(dt, daylight, viewer, camera);
       butterflies.update(time, dt, daylight);
       birds.update(time, dt, daylight, viewer);
     },
