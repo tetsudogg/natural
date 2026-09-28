@@ -25,27 +25,199 @@ function animated(mat: THREE.Material, uniforms: { uTime: { value: number } }, b
 
 // ---------- Fish ----------
 
-// A trout-like fish, nose toward -z: a slim body and a forked tail.
-function fishGeometry() {
-  const body = new THREE.SphereGeometry(1, 12, 8);
-  body.scale(0.045, 0.055, 0.16);
-  const tail = new THREE.BufferGeometry();
-  tail.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0.13, 0, 0.05, 0.24, 0, -0.05, 0.24], 3));
-  tail.setAttribute('normal', new THREE.Float32BufferAttribute([1, 0, 0, 1, 0, 0, 1, 0, 0], 3));
-  tail.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0], 2));
-  const g = mergeGeometries([body.toNonIndexed(), tail])!;
-  // Dark speckled back, pale belly.
-  const pos = g.attributes.position as THREE.BufferAttribute;
-  const cols = new Float32Array(pos.count * 3);
-  const back = srgb(0.16, 0.17, 0.12);
-  const belly = srgb(0.62, 0.6, 0.5);
-  const c = new THREE.Color();
-  for (let i = 0; i < pos.count; i++) {
-    c.copy(back).lerp(belly, THREE.MathUtils.smoothstep(-pos.getY(i), -0.01, 0.04));
-    cols.set([c.r, c.g, c.b], i * 3);
+// A mountain trout (like an amago or brown trout), nose toward -z, about 28 cm long.
+// Body: an oval cross-section swept along a tapering profile, a little taller than wide.
+const FISH_NOSE = -0.16;
+const FISH_TAIL = 0.115;
+
+function fishBodyGeometry() {
+  const rings = 22;
+  const around = 14;
+  const verts: number[] = [];
+  const uvs: number[] = [];
+  const idx: number[] = [];
+  for (let r = 0; r <= rings; r++) {
+    const t = r / rings;
+    const z = FISH_NOSE + t * (FISH_TAIL - FISH_NOSE);
+    // Blunt head, deepest a third of the way back, narrowing to the tail stalk.
+    const tt = t < 0.35 ? (t / 0.35) * 0.5 : 0.5 + ((t - 0.35) / 0.65) * 0.5;
+    const shape = Math.max(Math.pow(Math.sin(Math.PI * tt), 0.8), t > 0.5 ? 0.26 : 0);
+    const h = 0.046 * shape;
+    const w = 0.024 * shape;
+    for (let a = 0; a <= around; a++) {
+      const ang = (a / around) * Math.PI * 2;
+      const sy = Math.sin(ang);
+      const y = h * sy * (sy < 0 ? 0.92 : 1);
+      const x = w * Math.cos(ang);
+      verts.push(x, y, z);
+      // u runs nose to tail, v from belly (0) to back (1): the same pattern on both flanks.
+      uvs.push(t, 0.5 + 0.5 * sy);
+    }
   }
-  g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+  for (let r = 0; r < rings; r++) {
+    for (let a = 0; a < around; a++) {
+      const i0 = r * (around + 1) + a;
+      const i1 = i0 + around + 1;
+      idx.push(i0, i0 + 1, i1, i0 + 1, i1 + 1, i1);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g.toNonIndexed();
+}
+
+// Thin fins as flat polygons (each is a fan around its first point).
+function fishFinGeometry() {
+  const fans: number[][][] = [
+    // forked tail
+    [[0, 0, 0.11], [0, -0.012, 0.108], [0, -0.058, 0.228], [0, -0.004, 0.19], [0, 0.004, 0.19], [0, 0.062, 0.228], [0, 0.012, 0.108]],
+    // dorsal fin
+    [[0, 0.04, -0.035], [0, 0.043, -0.07], [0, 0.085, -0.055], [0, 0.063, -0.02], [0, 0.04, -0.012]],
+    // adipose fin, a small nub near the tail
+    [[0, 0.028, 0.05], [0, 0.03, 0.035], [0, 0.043, 0.052], [0, 0.026, 0.068]],
+    // anal fin
+    [[0, -0.034, 0.03], [0, -0.036, 0.005], [0, -0.066, 0.02], [0, -0.052, 0.05], [0, -0.03, 0.055]],
+    // pelvic and pectoral fins, angled out and down on each side
+    ...[1, -1].flatMap((sd) => [
+      [[sd * 0.02, -0.038, -0.02], [sd * 0.022, -0.04, -0.035], [sd * 0.05, -0.055, -0.01], [sd * 0.024, -0.04, 0.0]],
+      [[sd * 0.024, -0.03, -0.1], [sd * 0.026, -0.028, -0.115], [sd * 0.065, -0.048, -0.07], [sd * 0.03, -0.036, -0.085]],
+    ]),
+  ];
+  const verts: number[] = [];
+  const uvs: number[] = [];
+  for (const fan of fans) {
+    for (let k = 1; k < fan.length - 1; k++) {
+      for (const p of [fan[0], fan[k], fan[k + 1]]) {
+        verts.push(p[0], p[1], p[2]);
+        uvs.push(0.5 + p[2] * 2, 0.5 + p[1] * 4);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  g.computeVertexNormals();
   return g;
+}
+
+function fishGeometry() {
+  const g = mergeGeometries([fishBodyGeometry(), fishFinGeometry()], true)!;
+  return g;
+}
+
+// Skin: olive back with dark speckles, a row of soft oval parr marks along the side,
+// scattered red dots, bright silver-gold flanks and a pale belly.
+function fishSkinTexture(rnd: () => number) {
+  const w = 512;
+  const h = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+  // Canvas y = 0 is the back (v = 1), y = h the belly.
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, '#262b1c');
+  grad.addColorStop(0.3, '#3f4630');
+  grad.addColorStop(0.46, '#6f6f4a');
+  grad.addColorStop(0.56, '#9a9168');
+  grad.addColorStop(0.68, '#bdb698');
+  grad.addColorStop(0.82, '#d8d3c0');
+  grad.addColorStop(1, '#e8e4d8');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+  // Darker head top and a slightly darker tail.
+  const head = ctx.createLinearGradient(0, 0, w, 0);
+  head.addColorStop(0, 'rgba(30,32,22,0.45)');
+  head.addColorStop(0.2, 'rgba(30,32,22,0)');
+  head.addColorStop(0.85, 'rgba(30,32,22,0)');
+  head.addColorStop(1, 'rgba(40,38,26,0.35)');
+  ctx.fillStyle = head;
+  ctx.fillRect(0, 0, w, h * 0.6);
+  // Parr marks: soft, dark blue-grey ovals along the lateral line.
+  for (let i = 0; i < 9; i++) {
+    const x = w * (0.18 + i * 0.085) + (rnd() - 0.5) * 10;
+    const g = ctx.createRadialGradient(x, h * 0.46, 1, x, h * 0.46, 26);
+    g.addColorStop(0, 'rgba(55,62,70,0.55)');
+    g.addColorStop(1, 'rgba(55,62,70,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(x, h * 0.46, 13, 30, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Lateral line with a faint pink-gold sheen.
+  ctx.fillStyle = 'rgba(210,150,130,0.25)';
+  ctx.fillRect(w * 0.12, h * 0.5, w * 0.85, 7);
+  // Black speckles over the back and upper sides.
+  for (let i = 0; i < 260; i++) {
+    const x = rnd() * w;
+    const y = Math.pow(rnd(), 1.2) * h * 0.58;
+    ctx.fillStyle = `rgba(18,18,14,${0.5 + rnd() * 0.4})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 1.2 + rnd() * 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // A few red dots with pale rims along the flank.
+  for (let i = 0; i < 16; i++) {
+    const x = w * (0.2 + rnd() * 0.7);
+    const y = h * (0.4 + rnd() * 0.16);
+    ctx.fillStyle = 'rgba(240,225,200,0.6)';
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(200,60,40,0.9)';
+    ctx.beginPath();
+    ctx.arc(x, y, 2.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Eye near the nose.
+  ctx.fillStyle = '#e8d9a0';
+  ctx.beginPath();
+  ctx.arc(w * 0.075, h * 0.6, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#0b0b0b';
+  ctx.beginPath();
+  ctx.arc(w * 0.075, h * 0.6, 4.5, 0, Math.PI * 2);
+  ctx.fill();
+  // Gill cover edge.
+  ctx.strokeStyle = 'rgba(60,50,40,0.5)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(w * 0.02, h * 0.62, w * 0.14, -0.9, 0.9);
+  ctx.stroke();
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+// Fins: translucent olive with fine rays and a few dark spots.
+function fishFinTexture(rnd: () => number) {
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#7d7a5c';
+  ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = 'rgba(50,48,34,0.6)';
+  for (let i = 0; i < 40; i++) {
+    ctx.beginPath();
+    ctx.moveTo(size / 2, size / 2);
+    const a = (i / 40) * Math.PI * 2;
+    ctx.lineTo(size / 2 + Math.cos(a) * size, size / 2 + Math.sin(a) * size);
+    ctx.stroke();
+  }
+  for (let i = 0; i < 25; i++) {
+    ctx.fillStyle = 'rgba(25,24,18,0.7)';
+    ctx.beginPath();
+    ctx.arc(rnd() * size, rnd() * size, 1 + rnd() * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 interface Fish {
@@ -76,10 +248,16 @@ function createFish(rnd: () => number) {
   const phase = new Float32Array(count);
   for (let i = 0; i < count; i++) phase[i] = rnd() * 100;
   geo.setAttribute('phase', new THREE.InstancedBufferAttribute(phase, 1));
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, side: THREE.DoubleSide });
+  // A wet, slightly metallic skin; fins let some light through.
+  const skin = new THREE.MeshStandardMaterial({ map: fishSkinTexture(rnd), roughness: 0.45, metalness: 0.1 });
+  const fins = new THREE.MeshStandardMaterial({ map: fishFinTexture(rnd), roughness: 0.6, side: THREE.DoubleSide, transparent: true, opacity: 0.75 });
   // The body swings more toward the tail, like a swimming fish.
-  animated(mat, uniforms, 'float k = max(position.z + 0.08, 0.0); transformed.x += sin(uTime * 9.0 + phase - position.z * 18.0) * k * 0.28;');
+  const swim = 'float k = max(position.z + 0.08, 0.0); transformed.x += sin(uTime * 7.0 + phase - position.z * 16.0) * k * 0.18;';
+  animated(skin, uniforms, swim);
+  animated(fins, uniforms, swim);
+  const mat = [skin, fins];
   const mesh = new THREE.InstancedMesh(geo, mat, count);
+  mesh.castShadow = true;
   mesh.layers.set(NO_REFLECT_LAYER);
   mesh.frustumCulled = false;
   const m = new THREE.Matrix4();
@@ -121,7 +299,7 @@ function createFish(rnd: () => number) {
         f.y = THREE.MathUtils.clamp(bed + 0.25, bed + 0.08, surf - 0.12);
         q.setFromAxisAngle(up, f.heading);
         p.set(f.x, f.y, f.z);
-        s.setScalar(0.8 + (phase[i] % 1) * 0.6);
+        s.setScalar(0.75 + (phase[i] % 1) * 0.6);
         mesh.setMatrixAt(i, m.compose(p, q, s));
       }
       mesh.instanceMatrix.needsUpdate = true;

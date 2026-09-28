@@ -19,32 +19,62 @@ export const windUniforms = {
 // Colours are written as they look on screen (sRGB) and converted for lighting.
 export const srgb = (r: number, g: number, b: number) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace);
 
-// Bends vertices sideways by height above the instance's base.
-// Foliage cards also keep their outward normals on both faces, so crowns shade like a volume.
-function addWind(mat: THREE.Material, amount: number, stiffness: number, foliage = false, flutter = false) {
+// Wind. Gusts are a slow noise field drifting across the valley, so neighbouring plants
+// move together but never in lockstep and never on a fixed beat.
+// Plants bend from the base: nothing moves at the ground (or, for trees, below about the
+// middle of the trunk), and the bend grows toward the tip. Big trees bend less.
+interface WindOptions {
+  amount: number; // sideways movement at the tip, in metres, in a moderate breeze
+  height: number; // height of the plant model (local units) where the tip is
+  rigid?: number; // fraction of the height that stays still (trunks)
+  foliage?: boolean; // leaves: flutter a little and glow with light from behind
+  flutter?: boolean; // small plants: every stem sways on its own
+  sizeDamp?: boolean; // larger instances bend less (trees)
+}
+
+const WIND_NOISE = /* glsl */ `
+  float wHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float wNoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(wHash(i), wHash(i + vec2(1, 0)), u.x), mix(wHash(i + vec2(0, 1)), wHash(i + vec2(1, 1)), u.x), u.y);
+  }
+`;
+
+function addWind(mat: THREE.Material, o: WindOptions) {
+  const rigid = o.rigid ?? 0;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = windUniforms.uTime;
     shader.uniforms.uWind = windUniforms.uWind;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uWind;')
+      .replace('#include <common>', `#include <common>\nuniform float uTime;\nuniform float uWind;\n${WIND_NOISE}`)
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
         {
           vec3 ip = instanceMatrix[3].xyz;
-          float h = max(position.y, 0.0);
-          float bend = pow(h, ${stiffness.toFixed(2)}) * ${amount.toFixed(5)} * (0.4 + uWind);
           float t = uTime;
-          float w = sin(t * 1.3 + ip.x * 0.05 + ip.z * 0.07) + 0.5 * sin(t * 2.7 + ip.x * 0.2);
-          ${flutter ? `// Each stem and card sways on its own beat, not the whole clump at once.
-          float own = position.x * 5.3 + position.z * 4.1 + ip.x * 0.7;
-          w = w * 0.55 + 0.6 * sin(t * (2.2 + fract(own) * 1.4) + own * 3.0) + 0.2 * sin(t * 5.1 + own * 7.0);` : ''}
-          transformed.x += w * bend;
-          transformed.z += 0.6 * cos(t * 1.1 + ip.z * 0.06) * bend;
-          ${foliage ? 'transformed += normal * 0.06 * sin(t * 3.1 + position.x * 2.0 + ip.z) * (0.3 + uWind);' : ''}
+          // 0 at the ground (or the still part of a trunk), 1 at the tip; bends as a curve.
+          float k = clamp((position.y / ${o.height.toFixed(2)} - ${rigid.toFixed(2)}) / ${(1 - rigid).toFixed(2)}, 0.0, 1.0);
+          k = k * k;
+          float size = 1.0;
+          ${o.sizeDamp ? 'size = clamp(pow(length(instanceMatrix[1].xyz), -1.5), 0.5, 1.3);' : ''}
+          // Gusts roll across the land with the wind; lulls in between.
+          vec2 wdir = vec2(0.8, 0.6);
+          float gust = wNoise(ip.xz * 0.035 - wdir * t * 0.45) * 0.75 + wNoise(ip.xz * 0.11 - wdir * t * 1.1) * 0.35;
+          gust = gust * gust * (0.35 + uWind);
+          // A slow lean with the wind, plus an irregular back-and-forth.
+          float own = ${o.flutter ? 'position.x * 5.3 + position.z * 4.1 + ' : ''}ip.x * 0.37 + ip.z * 0.53;
+          float sway = wNoise(vec2(t * 0.9 + own * 3.1, own)) - 0.5;
+          float cross = wNoise(vec2(t * 0.7 - own * 2.3, own + 17.0)) - 0.5;
+          float amt = ${o.amount.toFixed(3)} * k * size;
+          transformed.x += (wdir.x * (gust * 0.8 + sway * 0.9) - wdir.y * cross * 0.6) * amt;
+          transformed.z += (wdir.y * (gust * 0.8 + sway * 0.9) + wdir.x * cross * 0.6) * amt;
+          ${o.foliage ? `// Leaves tremble a little, more toward the tip.
+          transformed += normal * ${(o.amount * 0.08).toFixed(4)} * k * (wNoise(vec2(t * 2.5 + position.x * 1.7, position.z * 1.3 + ip.z)) - 0.5) * (0.3 + uWind);` : ''}
         }`,
       );
-    if (foliage) {
+    if (o.foliage) {
       shader.uniforms.uSunView = windUniforms.uSunView;
       shader.uniforms.uSunColor = windUniforms.uSunColor;
       shader.fragmentShader = shader.fragmentShader
@@ -64,7 +94,7 @@ function addWind(mat: THREE.Material, amount: number, stiffness: number, foliage
         );
     }
   };
-  mat.customProgramCacheKey = () => `wind-${amount}-${stiffness}-${foliage}`;
+  mat.customProgramCacheKey = () => `wind-${JSON.stringify(o)}`;
 }
 
 function colored(geo: THREE.BufferGeometry, color: THREE.Color, jitter = 0, seed = 1) {
@@ -533,8 +563,10 @@ export function createVegetation() {
   bark.map.repeat.set(1, 4);
   bark.normal.repeat.set(1, 4);
   const woodMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: bark.map, normalMap: bark.normal, roughness: 0.95 });
-  addWind(woodMat, 0.0005, 2);
-  const leafMat = (kind: 'leaf' | 'needle' | 'maple', seed: number, sway = 0.0005, stiffness = 2) => {
+  // Trees: the lower half of the trunk stays still; the crown moves a little.
+  const TREE_WIND: WindOptions = { amount: 0.2, height: 16, rigid: 0.45, sizeDamp: true };
+  addWind(woodMat, TREE_WIND);
+  const leafMat = (kind: 'leaf' | 'needle' | 'maple', seed: number, wind: WindOptions = TREE_WIND) => {
     const m = new THREE.MeshStandardMaterial({
       map: foliageTexture(kind, seed),
       vertexColors: true,
@@ -542,7 +574,7 @@ export function createVegetation() {
       side: THREE.DoubleSide,
       roughness: 0.8,
     });
-    addWind(m, sway, stiffness, true);
+    addWind(m, { ...wind, foliage: true });
     return m;
   };
   const needleMat = leafMat('needle', 31);
@@ -557,7 +589,7 @@ export function createVegetation() {
   const sapling = broadleafGeometry(11);
   group.add(chunked(sapling.leaves, broadMat, saplings, 50, { shadow: true, maxDist: 220 }));
   group.add(chunked(sapling.wood, woodMat, saplings, 50, { maxDist: 160 }));
-  const bushMat = leafMat('leaf', 33, 0.06, 1.5);
+  const bushMat = leafMat('leaf', 33, { amount: 0.08, height: 1.6, rigid: 0.1 });
   const bushGroup = chunked(bushGeometry(), bushMat, bushes, 50, { shadow: true, maxDist: 200 });
   group.add(bushGroup);
 
@@ -583,7 +615,7 @@ export function createVegetation() {
     grass.push({ m, c: srgb(1, 1, 1).lerp(srgb(1.1, 1.0, 0.8), Math.max(0, dry - 0.45) * 1.5).multiplyScalar(0.9 + rnd() * 0.3) });
   }
   const grassMat = new THREE.MeshStandardMaterial({ map: grassAtlas(), vertexColors: true, alphaTest: 0.45, roughness: 0.85, side: THREE.DoubleSide });
-  addWind(grassMat, 0.12, 2, true, true);
+  addWind(grassMat, { amount: 0.1, height: 1, foliage: true, flutter: true });
   const grassGroup = chunked(grassClumpGeometry(), grassMat, grass, 30, { maxDist: 90 });
   group.add(grassGroup);
 
@@ -652,7 +684,7 @@ export function createVegetation() {
     flowers[kind].push({ m, c: new THREE.Color().setHSL(0, 0, 0.85 + rnd() * 0.15, THREE.SRGBColorSpace) });
   }
   const flowerMat = new THREE.MeshStandardMaterial({ map: flowerAtlas(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.8 });
-  addWind(flowerMat, 0.25, 2, true, true);
+  addWind(flowerMat, { amount: 0.07, height: 0.6, foliage: true, flutter: true });
   const flowerGroups = flowers.map((list, k) => chunked(flowerGeometry(k as FlowerKind), flowerMat, list, 30, { maxDist: 75 }));
   group.add(...flowerGroups);
 
@@ -673,7 +705,7 @@ export function createVegetation() {
     ferns.push({ m, c: new THREE.Color().setHSL(0.26, 0.5, 0.4 + rnd() * 0.15, THREE.SRGBColorSpace) });
   }
   const fernMat = new THREE.MeshStandardMaterial({ map: fernTexture(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.85 });
-  addWind(fernMat, 0.08, 1.5, true, true);
+  addWind(fernMat, { amount: 0.06, height: 1.2, foliage: true, flutter: true });
   const fernGroup = chunked(fernGeometry(), fernMat, ferns, 30, { maxDist: 85, shadow: false });
   group.add(fernGroup);
 
