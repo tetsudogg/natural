@@ -6,7 +6,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { HALF, streamDist } from './world';
 import { groundHeight, groundSlope } from './terrain';
 import { mulberry32 } from './noise';
-import { surface } from './textures';
+import { fallenLeavesTexture, surface } from './textures';
 
 export const BRANCHES_TO_BUILD = 5;
 export const PACK_MAX = 20;
@@ -46,6 +46,40 @@ interface Branch {
   taken: boolean;
 }
 
+// Drifts of dead leaves around each fallen branch and tree foot, partly covering
+// the branches so they settle into the forest floor instead of standing out.
+function createLeafLitter(spots: { x: number; z: number; r: number }[]) {
+  const rnd = mulberry32(505);
+  const textures = [fallenLeavesTexture(61), fallenLeavesTexture(62)];
+  const group = new THREE.Group();
+  const geo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  const n = new THREE.Vector3();
+  const spin = new THREE.Quaternion();
+  const col = new THREE.Color();
+  textures.forEach((map, k) => {
+    const mine = spots.filter((_, i) => i % 2 === k);
+    const mat = new THREE.MeshStandardMaterial({ map, alphaTest: 0.5, roughness: 0.95, side: THREE.DoubleSide });
+    const mesh = new THREE.InstancedMesh(geo, mat, mine.length);
+    mine.forEach((p, i) => {
+      const y = groundHeight(p.x, p.z);
+      // Lie along the ground's slope.
+      n.set(groundHeight(p.x - 0.3, p.z) - groundHeight(p.x + 0.3, p.z), 0.6, groundHeight(p.x, p.z - 0.3) - groundHeight(p.x, p.z + 0.3)).normalize();
+      q.setFromUnitVectors(up, n).multiply(spin.setFromAxisAngle(up, rnd() * Math.PI * 2));
+      const sc = p.r * (0.8 + rnd() * 0.4);
+      m.compose(new THREE.Vector3(p.x, y + 0.012 + rnd() * 0.03, p.z), q, new THREE.Vector3(sc, 1, sc));
+      mesh.setMatrixAt(i, m);
+      const v = 0.75 + rnd() * 0.3;
+      mesh.setColorAt(i, col.setRGB(v, v * 0.97, v * 0.92));
+    });
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  });
+  return group;
+}
+
 // Branches have fallen from the trees, so they lie around each trunk.
 function createBranches(barkMat: THREE.Material, trees: { x: number; z: number }[]) {
   const rnd = mulberry32(404);
@@ -59,6 +93,20 @@ function createBranches(barkMat: THREE.Material, trees: { x: number; z: number }
       const z = t.z + Math.sin(a) * r;
       if (Math.abs(x) > HALF - 6 || Math.abs(z) > HALF - 6 || streamDist(x, z) < 6 || groundSlope(x, z) > 0.8) continue;
       list.push({ x, z, taken: false });
+    }
+  }
+  // Leaves drift against each branch and gather at the foot of each tree.
+  const litter: { x: number; z: number; r: number }[] = [];
+  for (const b of list) {
+    for (let j = 0; j < 3; j++) litter.push({ x: b.x + (rnd() - 0.5) * 1.4, z: b.z + (rnd() - 0.5) * 1.4, r: 0.6 + rnd() * 0.6 });
+  }
+  for (const t of trees) {
+    for (let j = 0; j < 3; j++) {
+      const a = rnd() * Math.PI * 2;
+      const r = 0.6 + rnd() * 1.8;
+      const x = t.x + Math.cos(a) * r;
+      const z = t.z + Math.sin(a) * r;
+      if (streamDist(x, z) > 6) litter.push({ x, z, r: 0.8 + rnd() * 0.8 });
     }
   }
   const kinds = [branchGeometry(1), branchGeometry(2), branchGeometry(3), branchGeometry(4)];
@@ -87,7 +135,7 @@ function createBranches(barkMat: THREE.Material, trees: { x: number; z: number }
     mesh.receiveShadow = true;
   });
   const group = new THREE.Group();
-  group.add(...meshes);
+  group.add(...meshes, createLeafLitter(litter));
   const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
 
   return {
@@ -110,7 +158,7 @@ function createBranches(barkMat: THREE.Material, trees: { x: number; z: number }
     // Brighten the branch E would pick up, so it is easy to spot in the grass.
     highlight(i: number) {
       if (i === glowing) return;
-      for (const [j, c] of [[glowing, 1], [i, 1.9]] as const) {
+      for (const [j, c] of [[glowing, 1], [i, 1.7]] as const) {
         if (j < 0) continue;
         const s = slot[j];
         meshes[s.mesh].setColorAt(s.index, col.setRGB(shades[j] * c, shades[j] * c * 0.97, shades[j] * c * 0.9));
@@ -379,7 +427,7 @@ export interface CampfireSave {
 
 export function createCampfire(saved: CampfireSave | undefined, trees: { x: number; z: number }[]) {
   const bark = surface('bark');
-  const branchMat = new THREE.MeshStandardMaterial({ map: bark.map, color: 0xc4b6a2, roughness: 0.95 });
+  const branchMat = new THREE.MeshStandardMaterial({ map: bark.map, color: 0x9c8e7e, roughness: 0.95 });
   const branches = createBranches(branchMat, trees);
   const pit = createFirePit();
   pit.group.visible = false;

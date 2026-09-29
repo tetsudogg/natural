@@ -144,6 +144,48 @@ export function glowTexture() {
 }
 
 // Leaf sprays with transparent gaps, used on the cards that make up tree crowns.
+// A drift of dead leaves on the ground: the photographed leaves turned brown,
+// ochre and rust, lying every which way and fading out at the edges.
+export function fallenLeavesTexture(seed: number) {
+  const size = 512;
+  const rnd = mulberry32(seed);
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  image(leavesUrl).then((img) => {
+    const leaves: { x: number; y: number; rot: number; s: number; cell: number; f: string; d: number }[] = [];
+    for (let i = 0; i < 170; i++) {
+      // Denser in the middle, sparse toward the edge.
+      const a = rnd() * Math.PI * 2;
+      const r = Math.sqrt(rnd()) * size * 0.44;
+      const kind = rnd();
+      // Mostly dull browns, some ochre, a few dark damp ones.
+      const f =
+        kind < 0.55
+          ? `sepia(1) saturate(${0.7 + rnd() * 0.5}) hue-rotate(${rnd() * 10}deg) brightness(${0.35 + rnd() * 0.25})`
+          : kind < 0.8
+            ? `sepia(1) saturate(${1 + rnd() * 0.6}) hue-rotate(${5 + rnd() * 10}deg) brightness(${0.5 + rnd() * 0.2})`
+            : `sepia(1) saturate(0.5) brightness(${0.22 + rnd() * 0.15})`;
+      leaves.push({ x: size / 2 + Math.cos(a) * r, y: size / 2 + Math.sin(a) * r, rot: rnd() * Math.PI * 2, s: 26 + rnd() * 22, cell: Math.floor(rnd() * 8), f, d: r });
+    }
+    // Outer leaves first so the heap sits on top in the middle.
+    leaves.sort((a, b) => b.d - a.d);
+    for (const l of leaves) {
+      ctx.save();
+      ctx.translate(l.x, l.y);
+      ctx.rotate(l.rot);
+      ctx.filter = l.f;
+      ctx.drawImage(img, (l.cell % 4) * 256, Math.floor(l.cell / 4) * 256, 256, 256, -l.s / 2, -l.s / 2, l.s, l.s);
+      ctx.restore();
+    }
+    tex.needsUpdate = true;
+  });
+  return tex;
+}
+
 export function foliageTexture(kind: 'leaf' | 'needle' | 'maple', seed: number) {
   const size = 1024;
   const rnd = mulberry32(seed);
