@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HALF, forestDensity, heightAt, streamDist } from './world';
+import { HALF, forestDensity, heightAt, waterDist } from './world';
 import { fbm, lerp, smoothstep } from './noise';
 import { surface } from './textures';
 
@@ -15,7 +15,7 @@ const ROCK = srgb(0.4, 0.39, 0.36);
 const FAR_FOREST = srgb(0.1, 0.24, 0.07);
 
 function colorAt(x: number, z: number, slope: number, out: THREE.Color, far: boolean) {
-  const d = streamDist(x, z);
+  const d = waterDist(x, z);
   const n = fbm(x * 0.05 + 3, z * 0.05 - 8, 3);
   const forest = forestDensity(x, z);
   out.copy(GRASS).lerp(GRASS_DRY, smoothstep(0.45, 0.75, n) * 0.7);
@@ -68,7 +68,7 @@ function buildGrid(size: number, segs: number, far: boolean) {
       const z = pos.getZ(i);
       const ny = nrm.getY(i);
       const slope = Math.sqrt(Math.max(0, 1 - ny * ny)) / Math.max(ny, 0.05);
-      const d = streamDist(x, z);
+      const d = waterDist(x, z);
       const forest = forestDensity(x, z);
       const n = fbm(x * 0.07 - 4, z * 0.07 + 9, 3);
       const m = fbm(x * 0.11 + 17, z * 0.11 - 5, 3);
@@ -126,16 +126,16 @@ export function createTerrain() {
     const samplers = LAYERS.map((_, i) => `uniform sampler2D tDiff${i};\nuniform sampler2D tNor${i};`).join('\n');
     const sizes = LAYERS.map((l) => (1 / l.size).toFixed(4));
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec4 splat;\nvarying vec4 vSplat;\nvarying vec2 vGroundXZ;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = splat;\nvGroundXZ = position.xz;');
+      .replace('#include <common>', '#include <common>\nattribute vec4 splat;\nvarying vec4 vSplat;\nvarying vec3 vGroundP;\nvarying vec3 vGroundNrm;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = splat;\nvGroundP = position;\nvGroundNrm = normal;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\n${samplers}\nvarying vec4 vSplat;\nvarying vec2 vGroundXZ;`)
+      .replace('#include <common>', `#include <common>\n${samplers}\nvarying vec4 vSplat;\nvarying vec3 vGroundP;\nvarying vec3 vGroundNrm;`)
       .replace(
         '#include <map_fragment>',
         `vec3 groundN = vec3(0.0);
         {
           // Same orientation as the mesh uv, so three's tangent frame fits these normals.
-          vec2 p = vec2(vGroundXZ.x, -vGroundXZ.y);
+          vec2 p = vec2(vGroundP.x, -vGroundP.z);
           float w[5];
           w[1] = vSplat.x; w[2] = vSplat.y; w[3] = vSplat.z; w[4] = vSplat.w;
           w[0] = max(0.0, 1.0 - w[1] - w[2] - w[3] - w[4]);
@@ -156,7 +156,11 @@ export function createTerrain() {
             groundN += w[3] * (texture2D(tNor3, p * ${sizes[3]}).xyz * 2.0 - 1.0);
           }
           if (w[4] > 0.01) {
-            col += w[4] * texture2D(tDiff4, p * ${sizes[4]}).rgb;
+            // Cliffs and gorge walls: projected from the sides too, so the rock is not smeared.
+            vec3 bw = pow(abs(normalize(vGroundNrm)), vec3(4.0));
+            bw /= bw.x + bw.y + bw.z;
+            vec3 q = vGroundP * ${sizes[4]};
+            col += w[4] * (texture2D(tDiff4, q.zy).rgb * bw.x + texture2D(tDiff4, p * ${sizes[4]}).rgb * bw.y + texture2D(tDiff4, q.xy).rgb * bw.z);
             groundN += w[4] * (texture2D(tNor4, p * ${sizes[4]}).xyz * 2.0 - 1.0);
           }
           diffuseColor.rgb *= col;
@@ -165,7 +169,7 @@ export function createTerrain() {
       )
       .replace('vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;', 'vec3 mapN = groundN;');
   };
-  const main = new THREE.Mesh(buildGrid(HALF * 2, 400, false), mat);
+  const main = new THREE.Mesh(buildGrid(HALF * 2, 560, false), mat);
   main.receiveShadow = true;
 
   const farMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
@@ -177,7 +181,7 @@ export function createTerrain() {
 }
 
 // Fast lookups on the built grid, used for placing plants and walking.
-const GRID = 401;
+const GRID = 561;
 const STEP = (HALF * 2) / (GRID - 1);
 let heights: Float32Array | null = null;
 

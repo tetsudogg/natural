@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import foxUrl from './assets/fox.glb?url';
-import { HALF, clearingFactor, forestDensity, streamDist, streamX, waterLevel } from './world';
+import { HALF, clearingFactor, forestDensity, waterDist, streamX, waterLevel } from './world';
 import { groundHeight } from './terrain';
 import { mulberry32 } from './noise';
 import { NO_REFLECT_LAYER } from './water';
@@ -337,7 +337,7 @@ function createButterflies(rnd: () => number) {
     const x = (rnd() * 2 - 1) * (HALF - 20);
     const z = (rnd() * 2 - 1) * (HALF - 20);
     if (forestDensity(x, z) > 0.35 && clearingFactor(x, z) < 0.3) continue;
-    if (streamDist(x, z) < 5) continue;
+    if (waterDist(x, z) < 5) continue;
     list.push({ x, y: groundHeight(x, z) + 0.8, z, vx: 0, vz: 0, home: new THREE.Vector2(x, z) });
   }
   const count = list.length;
@@ -580,7 +580,7 @@ function createFox(rnd: () => number) {
     const ahead = SHOW_NOW ? 10 : 18 + rnd() * 18;
     const across = new THREE.Vector3(-viewDir.z, 0, viewDir.x).multiplyScalar(side);
     pos.copy(viewer).addScaledVector(viewDir, ahead).addScaledVector(across, SHOW_NOW ? 3 : 14 + rnd() * 6);
-    if (streamDist(pos.x, pos.z) < 6) return false;
+    if (waterDist(pos.x, pos.z) < 6) return false;
     dir.copy(across).negate().addScaledVector(viewDir, (rnd() - 0.5) * 0.6).setY(0).normalize();
     active = true;
     pause = 0;
@@ -623,7 +623,7 @@ function createFox(rnd: () => number) {
         play(speed > 2 ? 'Run' : 'Walk');
         // Steer around the stream and gently wander.
         const ahead = pos.clone().addScaledVector(dir, 4);
-        if (streamDist(ahead.x, ahead.z) < 6) dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), dt * 1.5);
+        if (waterDist(ahead.x, ahead.z) < 6) dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), dt * 1.5);
         dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.sin(travelled * 0.3) * dt * 0.3);
         pos.addScaledVector(dir, speed * dt);
         travelled += speed * dt;

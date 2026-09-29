@@ -4,6 +4,7 @@ import { createPost, QUALITY_LABEL, QUALITY_PIXEL_RATIO, type Quality } from './
 import { createTerrain } from './terrain';
 import { createVegetation, updateDistanceCulling, windUniforms } from './vegetation';
 import { createStream, createFireflies, NO_REFLECT_LAYER } from './water';
+import { createBrooks } from './brooks';
 import { createWildlife } from './wildlife';
 import { createCampfire, type CampfireSave } from './campfire';
 import { createTent, type TentSave } from './tent';
@@ -90,6 +91,9 @@ async function main() {
   scene.add(veg.group);
   const stream = createStream();
   scene.add(stream.mesh);
+  const brookWater = createBrooks();
+  scene.add(brookWater.group);
+  brookWater.group.traverse((o) => o.layers.set(NO_REFLECT_LAYER));
   const fireflies = createFireflies();
   scene.add(fireflies.points);
   const wildlife = createWildlife();
@@ -175,9 +179,9 @@ async function main() {
   }
 
   function showHelpBriefly() {
+    // The key guide stays along the bottom (H hides it); it is hidden in view mode with the HUD.
     help.classList.remove('off');
     clearTimeout(helpTimer);
-    helpTimer = window.setTimeout(() => help.classList.add('off'), 9000);
   }
 
   function start() {
@@ -411,6 +415,7 @@ async function main() {
 
     const day = sky.update(hour, player.position);
     stream.update(elapsed, day.sunDir, day.sunColor, day.sunIntensity, day.daylight);
+    brookWater.update(elapsed, day.sunDir, day.sunColor, day.sunIntensity, day.daylight, day.fogColor);
     fireflies.update(elapsed, day.night);
     wildlife.update(elapsed, dt, day.daylight, player.position, camera);
     clouds.update(elapsed, player.position, day.sunDir, day.sunColor, day.daylight, day.night, day.fogColor);

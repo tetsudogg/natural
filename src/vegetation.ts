@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { HALF, clearingFactor, forestDensity, streamDist, streamX, WATERFALL_Z } from './world';
+import { HALF, brookEdgeDist, brooks, clearingFactor, forestDensity, waterDist, streamX, WATERFALL_Z } from './world';
 import { groundHeight, groundSlope } from './terrain';
 import { fbm, mulberry32 } from './noise';
 import { NO_REFLECT_LAYER } from './water';
@@ -553,11 +553,11 @@ export function createVegetation() {
       const px = x + (rnd() - 0.5) * step * 0.9;
       const pz = z + (rnd() - 0.5) * step * 0.9;
       const dens = forestDensity(px, pz);
-      const d = streamDist(px, pz);
+      const d = waterDist(px, pz);
       const slope = groundSlope(px, pz);
       // A thin line of trees along the banks, dense forest elsewhere.
       const bank = d > 7 && d < 14 ? 0.18 : 0;
-      if (slope > 1.1) continue;
+      if (slope > 1.1 || d < 5.5) continue;
       if (rnd() < Math.max(dens * 0.85, bank)) {
         const cedarZone = fbm(px * 0.008 + 5, pz * 0.008, 2) > 0.6;
         const tint = new THREE.Color().setHSL(0, 0, 0.8 + rnd() * 0.2, THREE.SRGBColorSpace);
@@ -616,7 +616,7 @@ export function createVegetation() {
   for (let i = 0; i < grassCandidates; i++) {
     const x = (rnd() * 2 - 1) * (HALF - 3);
     const z = (rnd() * 2 - 1) * (HALF - 3);
-    const d = streamDist(x, z);
+    const d = waterDist(x, z);
     if (d < 4.2 || d > 110) continue;
     const open = 1 - forestDensity(x, z);
     if (rnd() > open * open * (d < 30 ? 1 : 0.5)) continue;
@@ -645,7 +645,7 @@ export function createVegetation() {
       new THREE.Vector3(s * (0.8 + rnd() * 0.6), s * (0.55 + rnd() * 0.4), s * (0.8 + rnd() * 0.6)),
     );
     // Rocks away from the water are more often mossy.
-    const wet = streamDist(x, z) < 4;
+    const wet = waterDist(x, z) < 4;
     const shape = Math.floor(rnd() * 2) + (rnd() < (wet ? 0.6 : 0.8) ? 2 : 0);
     rocks[shape].push({ m, c: new THREE.Color().setHSL(0.08, 0.06, 0.75 + rnd() * 0.25, THREE.SRGBColorSpace) });
   };
@@ -667,8 +667,50 @@ export function createVegetation() {
   for (let i = 0; i < 500; i++) {
     const x = (rnd() * 2 - 1) * (HALF - 5);
     const z = (rnd() * 2 - 1) * (HALF - 5);
-    if (streamDist(x, z) < 5 || clearingFactor(x, z) > 0.3) continue;
+    if (waterDist(x, z) < 5 || clearingFactor(x, z) > 0.3) continue;
     addRock(x, z, 0.3 + rnd() * rnd() * 2.5, 0.4);
+  }
+  // The brooks: mossy boulders in and beside the water, and rock stacked up the
+  // sides of every waterfall like the walls of a small gorge.
+  for (const b of brooks()) {
+    const n = b.x.length;
+    for (let k = 3; k < n; k++) {
+      const tx = b.x[Math.min(n - 1, k + 1)] - b.x[k - 1];
+      const tz = b.z[Math.min(n - 1, k + 1)] - b.z[k - 1];
+      const l = Math.hypot(tx, tz) || 1;
+      const nx = -tz / l;
+      const nz = tx / l;
+      const w = b.width[k];
+      if (rnd() < 0.45) {
+        const o = (rnd() - 0.5) * 2 * w;
+        addRock(b.x[k] + nx * o, b.z[k] + nz * o, 0.2 + rnd() * rnd() * 0.7, 0.35);
+      }
+      for (const side of [-1, 1]) {
+        if (rnd() < 0.55) {
+          const o = side * (w + 0.2 + rnd() * rnd() * 3);
+          addRock(b.x[k] + nx * o, b.z[k] + nz * o, 0.35 + rnd() * rnd() * 1.5, 0.3);
+        }
+      }
+    }
+    for (const f of b.falls) {
+      const H = f.top - f.bottom;
+      const sx = -f.dirZ;
+      const sz = f.dirX;
+      // Rock clings to the gorge walls on both sides, more of it the taller the fall.
+      for (const side of [-1, 1]) {
+        for (let i = 0; i < 3 + H * 1.5; i++) {
+          const back = -2.5 + rnd() * 5;
+          const o = side * (f.width + 1.2 + rnd() * (1.5 + H * 0.35));
+          addRock(f.x + sx * o + f.dirX * back, f.z + sz * o + f.dirZ * back, 0.5 + rnd() * 0.8, 0.6);
+        }
+      }
+      // Boulders ringing the plunge pool.
+      for (let i = 0; i < 6; i++) {
+        const a = rnd() * Math.PI * 2;
+        const r = f.width + 1.2 + rnd() * 1.5;
+        addRock(f.x + f.dirX * 2.5 + Math.cos(a) * r, f.z + f.dirZ * 2.5 + Math.sin(a) * r, 0.5 + rnd() * 0.9, 0.35);
+      }
+    }
   }
   const rockMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88 });
   photoRock(rockMat);
@@ -683,7 +725,7 @@ export function createVegetation() {
   for (let i = 0; i < 520000; i++) {
     const x = (rnd() * 2 - 1) * (HALF - 3);
     const z = (rnd() * 2 - 1) * (HALF - 3);
-    const d = streamDist(x, z);
+    const d = waterDist(x, z);
     if (d < 4.5 || d > 120) continue;
     const kind = Math.floor(rnd() * FLOWER_KINDS) as FlowerKind;
     const patch = fbm(x * 0.035 + kind * 31, z * 0.035 - kind * 17, 2);
@@ -711,8 +753,10 @@ export function createVegetation() {
     const x = (rnd() * 2 - 1) * (HALF - 3);
     const z = (rnd() * 2 - 1) * (HALF - 3);
     const dens = forestDensity(x, z);
-    if (rnd() > THREE.MathUtils.smoothstep(dens, 0.2, 0.7) * 0.5) continue;
-    if (groundSlope(x, z) > 0.8) continue;
+    const brookBank = brookEdgeDist(x, z);
+    const damp = brookBank > 1.2 ? 1 - THREE.MathUtils.smoothstep(brookBank, 1, 9) : 0;
+    if (brookBank < 1.2 || rnd() > Math.max(THREE.MathUtils.smoothstep(dens, 0.2, 0.7) * 0.5, damp * 0.9)) continue;
+    if (groundSlope(x, z) > (damp > 0 ? 1.4 : 0.8)) continue;
     const s = 0.6 + rnd() * 0.7;
     const m = new THREE.Matrix4().compose(
       new THREE.Vector3(x, groundHeight(x, z) - 0.05, z),

@@ -1,7 +1,7 @@
 // The sounds of the valley, synthesised live with Web Audio (no sound files).
 
 import * as THREE from 'three';
-import { streamX, waterLevel, WATERFALL_Z, HALF } from './world';
+import { streamX, waterLevel, WATERFALL_Z, HALF, brooks, nearestBrook } from './world';
 
 type Ground = 'grass' | 'gravel' | 'forest';
 
@@ -14,6 +14,10 @@ export class Soundscape {
   private streamPanner!: PannerNode;
   private streamGain!: GainNode;
   private babbleGain!: GainNode;
+  private brookPanner!: PannerNode;
+  private brookGain!: GainNode;
+  private brookFallPanner!: PannerNode;
+  private brookFallGain!: GainNode;
   private cicadaGain!: GainNode;
   private crickets: { panner: PannerNode; env: GainNode; next: number; kind: number }[] = [];
   private nextBird = 0;
@@ -74,6 +78,18 @@ export class Soundscape {
     this.babbleGain = ctx.createGain();
     this.babbleGain.gain.value = 0.2;
     this.noiseSource(this.filter('bandpass', 2400, 1.2), this.babbleGain, this.streamGain);
+
+    // The nearest side brook trickles, and the nearest of its falls roars softly.
+    this.brookPanner = this.panner(2, 1.4);
+    this.brookGain = ctx.createGain();
+    this.brookGain.gain.value = 0;
+    this.brookGain.connect(this.brookPanner);
+    this.noiseSource(this.filter('bandpass', 1500, 0.9), this.brookGain, null);
+    this.brookFallPanner = this.panner(5, 1.2);
+    this.brookFallGain = ctx.createGain();
+    this.brookFallGain.gain.value = 0;
+    this.brookFallGain.connect(this.brookFallPanner);
+    this.noiseSource(this.filter('lowpass', 2200, 0.5), this.brookFallGain, null);
 
     // The waterfall is a fixed, louder source.
     const fall = this.panner(8, 1);
@@ -319,6 +335,23 @@ export class Soundscape {
       this.nextBabble = now + 0.05 + Math.random() * 0.15;
       this.babbleGain.gain.setTargetAtTime(0.1 + Math.random() * 0.4, now, 0.04);
     }
+
+    const nb = nearestBrook(this.listenerPos.x, this.listenerPos.z);
+    if (nb) this.setPos(this.brookPanner, nb.x, nb.water + 0.1, nb.z);
+    this.brookGain.gain.setTargetAtTime(nb ? 0.35 : 0, now, 0.3);
+    let best = null as null | { x: number; z: number; bottom: number; h: number };
+    let bestD = Infinity;
+    for (const b of brooks()) {
+      for (const f of b.falls) {
+        const d = Math.hypot(f.x - this.listenerPos.x, f.z - this.listenerPos.z);
+        if (d < bestD) {
+          bestD = d;
+          best = { x: f.x, z: f.z, bottom: f.bottom, h: f.top - f.bottom };
+        }
+      }
+    }
+    if (best) this.setPos(this.brookFallPanner, best.x, best.bottom + 0.5, best.z);
+    this.brookFallGain.gain.setTargetAtTime(best ? 0.25 + Math.min(best.h, 9) * 0.08 : 0, now, 0.4);
 
     // Gusts come and go every few seconds.
     if (now > this.nextGust) {

@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { HALF, streamDist } from './world';
+import { HALF, waterDist } from './world';
 import { groundHeight, groundSlope } from './terrain';
 import { mulberry32 } from './noise';
 import { deadLeafAtlas, fallenLeavesTexture, surface } from './textures';
@@ -184,7 +184,7 @@ function createBranches(barkMat: THREE.Material, trees: { x: number; z: number }
       const r = 0.9 + Math.pow(rnd(), 1.5) * 3;
       const x = t.x + Math.cos(a) * r;
       const z = t.z + Math.sin(a) * r;
-      if (Math.abs(x) > HALF - 6 || Math.abs(z) > HALF - 6 || streamDist(x, z) < 6 || groundSlope(x, z) > 0.8) continue;
+      if (Math.abs(x) > HALF - 6 || Math.abs(z) > HALF - 6 || waterDist(x, z) < 6 || groundSlope(x, z) > 0.8) continue;
       list.push({ x, z, taken: false });
     }
   }
@@ -199,7 +199,7 @@ function createBranches(barkMat: THREE.Material, trees: { x: number; z: number }
       const r = 0.6 + rnd() * 1.8;
       const x = t.x + Math.cos(a) * r;
       const z = t.z + Math.sin(a) * r;
-      if (streamDist(x, z) > 6) litter.push({ x, z, r: 0.8 + rnd() * 0.8 });
+      if (waterDist(x, z) > 6) litter.push({ x, z, r: 0.8 + rnd() * 0.8 });
     }
   }
   const piles: { x: number; z: number; r: number }[] = [];
@@ -214,7 +214,7 @@ function createBranches(barkMat: THREE.Material, trees: { x: number; z: number }
       const r = 0.5 + rnd() * 1.4;
       const x = t.x + Math.cos(a) * r;
       const z = t.z + Math.sin(a) * r;
-      if (streamDist(x, z) > 6) piles.push({ x, z, r: 1 + rnd() * 0.8 });
+      if (waterDist(x, z) > 6) piles.push({ x, z, r: 1 + rnd() * 0.8 });
     }
   }
   const pileGroups = chunkedChildren(createLeafPiles(piles));
@@ -775,7 +775,7 @@ export function createCampfire(saved: CampfireSave | undefined, trees: { x: numb
       if (pack < BRANCHES_TO_BUILD) return `焚き火には枝が ${BRANCHES_TO_BUILD} 本いります（今 ${pack} 本）`;
       const x = pos.x - Math.sin(yaw) * 1.8;
       const z = pos.z - Math.cos(yaw) * 1.8;
-      if (streamDist(x, z) < 6) return '水辺からもう少し離れてください';
+      if (waterDist(x, z) < 6) return '水辺からもう少し離れてください';
       if (groundSlope(x, z) > 0.35) return 'もう少し平らな場所を選んでください';
       if (tooClose?.(x, z)) return 'テントから少し離してください';
       pack -= BRANCHES_TO_BUILD;

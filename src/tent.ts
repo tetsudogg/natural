@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { groundHeight, groundSlope } from './terrain';
-import { streamDist } from './world';
+import { waterDist } from './world';
 import { mulberry32 } from './noise';
 
 export interface TentSave {
@@ -345,7 +345,7 @@ export function createTent(saved: TentSave | undefined, trees: { x: number; z: n
   }
 
   function check(x: number, z: number): string {
-    if (streamDist(x, z) < 6) return '水辺からもう少し離れてください';
+    if (waterDist(x, z) < 6) return '水辺からもう少し離れてください';
     if (api.avoid) {
       const a = api.avoid();
       if (a && Math.hypot(a.x - x, a.z - z) < 3.2) return '焚き火から少し離してください';

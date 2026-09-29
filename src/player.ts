@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import { groundHeight } from './terrain';
-import { WALK_LIMIT, streamDist, forestDensity } from './world';
+import { WALK_LIMIT, waterDist, forestDensity } from './world';
 
 const EYE = 1.6;
 const WALK = 1.7;
@@ -86,7 +86,7 @@ export class Player {
       const stride = THREE.MathUtils.mapLinear(THREE.MathUtils.clamp(speed, WALK, RUN), WALK, RUN, 0.87, 1.4);
       this.stepPhase += (dt * speed) / stride;
       if (Math.floor(prev) !== Math.floor(this.stepPhase) && this.onStep) {
-        const d = streamDist(this.position.x, this.position.z);
+        const d = waterDist(this.position.x, this.position.z);
         const ground = d < 5.5 ? 'gravel' : forestDensity(this.position.x, this.position.z) > 0.5 ? 'forest' : 'grass';
         this.onStep(ground, running);
       }
