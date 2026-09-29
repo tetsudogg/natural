@@ -352,6 +352,7 @@ async function main() {
       packEl.textContent = campfire.pack > 0 ? `枝 ${campfire.pack} 本` : '';
     }
     for (const g of veg.cullGroups) updateDistanceCulling(g, camera.position);
+    for (const g of campfire.cullGroups) updateDistanceCulling(g, camera.position);
     sound.update(dt, camera, day.daylight, day.night, hour);
 
     camera.updateMatrixWorld();

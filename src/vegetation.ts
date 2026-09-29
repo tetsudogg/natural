@@ -467,13 +467,13 @@ function fernGeometry() {
   return mergeGeometries(parts)!;
 }
 
-interface Placement {
+export interface Placement {
   m: THREE.Matrix4;
   c: THREE.Color;
 }
 
 // Splits instances into square chunks so off-screen and far chunks are skipped.
-function chunked(geo: THREE.BufferGeometry, mat: THREE.Material, items: Placement[], chunk: number, opts: { shadow?: boolean; maxDist?: number }) {
+export function chunked(geo: THREE.BufferGeometry, mat: THREE.Material, items: Placement[], chunk: number, opts: { shadow?: boolean; maxDist?: number }) {
   const group = new THREE.Group();
   const buckets = new Map<string, Placement[]>();
   const p = new THREE.Vector3();

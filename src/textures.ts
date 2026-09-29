@@ -146,6 +146,49 @@ export function glowTexture() {
 // Leaf sprays with transparent gaps, used on the cards that make up tree crowns.
 // A drift of dead leaves on the ground: the photographed leaves turned brown,
 // ochre and rust, lying every which way and fading out at the edges.
+// The photographed leaves recoloured as dead leaves, one per cell of a 4x2 atlas.
+export function deadLeafAtlas() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d')!;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  // Tints (sRGB 0..255) for each leaf: browns, ochre, rust and a dark damp one.
+  const tints = [
+    [125, 70, 30],
+    [175, 115, 40],
+    [100, 55, 25],
+    [150, 85, 35],
+    [190, 130, 45],
+    [130, 60, 28],
+    [160, 100, 45],
+    [95, 60, 30],
+  ];
+  image(leavesUrl).then((img) => {
+    // Recolour by hand (not canvas filters) so every browser gives the same browns:
+    // keep each leaf's light and shade, swap its colour for the tint.
+    ctx.drawImage(img, 0, 0);
+    const data = ctx.getImageData(0, 0, 1024, 512);
+    const d = data.data;
+    for (let y = 0; y < 512; y++) {
+      for (let x = 0; x < 1024; x++) {
+        const i = (y * 1024 + x) * 4;
+        const t = tints[Math.floor(x / 256) + Math.floor(y / 256) * 4];
+        const l = (0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]) / 255;
+        const k = 0.3 + l * 1.2;
+        d[i] = Math.min(255, t[0] * k);
+        d[i + 1] = Math.min(255, t[1] * k);
+        d[i + 2] = Math.min(255, t[2] * k);
+      }
+    }
+    ctx.putImageData(data, 0, 0);
+    tex.needsUpdate = true;
+  });
+  return tex;
+}
+
 export function fallenLeavesTexture(seed: number) {
   const size = 512;
   const rnd = mulberry32(seed);

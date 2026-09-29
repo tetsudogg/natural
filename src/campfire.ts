@@ -6,7 +6,8 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { HALF, streamDist } from './world';
 import { groundHeight, groundSlope } from './terrain';
 import { mulberry32 } from './noise';
-import { fallenLeavesTexture, surface } from './textures';
+import { deadLeafAtlas, fallenLeavesTexture, surface } from './textures';
+import { chunked, type Placement } from './vegetation';
 
 export const BRANCHES_TO_BUILD = 5;
 export const PACK_MAX = 20;
@@ -46,6 +47,85 @@ interface Branch {
   taken: boolean;
 }
 
+// A small heap of loose dead leaves: many single leaves, tilted every which way,
+// piled highest in the middle so the drift has real depth.
+function leafPileGeometry(seed: number) {
+  const rnd = mulberry32(seed);
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const nor: number[] = [];
+  const col: number[] = [];
+  const idx: number[] = [];
+  const R = 0.55;
+  const H = 0.24;
+  const q = new THREE.Quaternion();
+  const e = new THREE.Euler();
+  const v = new THREE.Vector3();
+  for (let i = 0; i < 240; i++) {
+    const a = rnd() * Math.PI * 2;
+    const r = Math.pow(rnd(), 0.8) * R;
+    const h = H * Math.pow(1 - r / R, 1.2) * rnd() + 0.01;
+    const s = 0.06 + rnd() * 0.06;
+    // Leaves buried deeper in the heap get less light.
+    const shade = 0.6 + 0.4 * Math.min(1, h / (H * Math.pow(1 - r / R, 1.2) + 0.02));
+    q.setFromEuler(e.set((rnd() - 0.5) * 1.1, rnd() * Math.PI * 2, (rnd() - 0.5) * 1.1, 'YXZ'));
+    const cx = Math.cos(a) * r;
+    const cz = Math.sin(a) * r;
+    const cell = Math.floor(rnd() * 8);
+    const u0 = (cell % 4) / 4;
+    const v0 = 1 - Math.floor(cell / 4) / 2;
+    const base = pos.length / 3;
+    const corners = [
+      [-0.5, -0.5, u0, v0 - 0.5],
+      [0.5, -0.5, u0 + 0.25, v0 - 0.5],
+      [0.5, 0.5, u0 + 0.25, v0],
+      [-0.5, 0.5, u0, v0],
+    ];
+    for (const [x, z, cu, cv] of corners) {
+      // A slight curl: the leaf's edges lift a little.
+      v.set(x * s, Math.abs(x) * s * 0.25, z * s).applyQuaternion(q);
+      pos.push(cx + v.x, h + v.y, cz + v.z);
+      uv.push(cu, cv);
+      // Lit as if facing up, so tilted leaves shade softly instead of flipping dark.
+      nor.push(0, 1, 0);
+      col.push(shade, shade, shade);
+    }
+    idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  return g;
+}
+
+function createLeafPiles(spots: { x: number; z: number; r: number }[]) {
+  const rnd = mulberry32(606);
+  const mat = new THREE.MeshStandardMaterial({ map: deadLeafAtlas(), color: 0xffe6cc, vertexColors: true, alphaTest: 0.5, roughness: 1, envMapIntensity: 0.25, side: THREE.DoubleSide });
+  // Both sides of a leaf are lit as its top, so flipped leaves don't turn grey-blue.
+  mat.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace('float faceDirection = gl_FrontFacing ? 1.0 : - 1.0;', 'float faceDirection = 1.0;');
+  };
+  const kinds: Placement[][] = [[], [], []];
+  const up = new THREE.Vector3(0, 1, 0);
+  const n = new THREE.Vector3();
+  const q = new THREE.Quaternion();
+  const spin = new THREE.Quaternion();
+  for (const p of spots) {
+    n.set(groundHeight(p.x - 0.3, p.z) - groundHeight(p.x + 0.3, p.z), 0.6, groundHeight(p.x, p.z - 0.3) - groundHeight(p.x, p.z + 0.3)).normalize();
+    q.setFromUnitVectors(up, n).multiply(spin.setFromAxisAngle(up, rnd() * Math.PI * 2));
+    const sc = p.r * (0.8 + rnd() * 0.5);
+    const m = new THREE.Matrix4().compose(new THREE.Vector3(p.x, groundHeight(p.x, p.z) - 0.01, p.z), q, new THREE.Vector3(sc, 0.7 + rnd() * 0.6, sc));
+    const v = 0.65 + rnd() * 0.3;
+    kinds[Math.floor(rnd() * 3)].push({ m, c: new THREE.Color(v, v * 0.97, v * 0.92) });
+  }
+  const group = new THREE.Group();
+  kinds.forEach((list, i) => group.add(chunked(leafPileGeometry(700 + i), mat, list, 30, { maxDist: 60 })));
+  return group;
+}
+
 // Drifts of dead leaves around each fallen branch and tree foot, partly covering
 // the branches so they settle into the forest floor instead of standing out.
 function createLeafLitter(spots: { x: number; z: number; r: number }[]) {
@@ -80,6 +160,8 @@ function createLeafLitter(spots: { x: number; z: number; r: number }[]) {
   return group;
 }
 
+const chunkedChildren = (g: THREE.Group) => g.children as THREE.Group[];
+
 // Branches have fallen from the trees, so they lie around each trunk.
 function createBranches(barkMat: THREE.Material, trees: { x: number; z: number }[]) {
   const rnd = mulberry32(404);
@@ -109,6 +191,22 @@ function createBranches(barkMat: THREE.Material, trees: { x: number; z: number }
       if (streamDist(x, z) > 6) litter.push({ x, z, r: 0.8 + rnd() * 0.8 });
     }
   }
+  const piles: { x: number; z: number; r: number }[] = [];
+  for (const b of list) {
+    // One heap against the branch, one a little way off.
+    piles.push({ x: b.x + (rnd() - 0.5) * 0.5, z: b.z + (rnd() - 0.5) * 0.5, r: 1 + rnd() * 0.6 });
+    piles.push({ x: b.x + (rnd() - 0.5) * 2, z: b.z + (rnd() - 0.5) * 2, r: 0.8 + rnd() * 0.6 });
+  }
+  for (const t of trees) {
+    for (let j = 0; j < 3; j++) {
+      const a = rnd() * Math.PI * 2;
+      const r = 0.5 + rnd() * 1.4;
+      const x = t.x + Math.cos(a) * r;
+      const z = t.z + Math.sin(a) * r;
+      if (streamDist(x, z) > 6) piles.push({ x, z, r: 1 + rnd() * 0.8 });
+    }
+  }
+  const pileGroups = chunkedChildren(createLeafPiles(piles));
   const kinds = [branchGeometry(1), branchGeometry(2), branchGeometry(3), branchGeometry(4)];
   const meshes = kinds.map((g) => new THREE.InstancedMesh(g, barkMat, list.length));
   const slot: { mesh: number; index: number }[] = [];
@@ -135,11 +233,12 @@ function createBranches(barkMat: THREE.Material, trees: { x: number; z: number }
     mesh.receiveShadow = true;
   });
   const group = new THREE.Group();
-  group.add(...meshes, createLeafLitter(litter));
+  group.add(...meshes, createLeafLitter(litter), ...pileGroups);
   const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
 
   return {
     group,
+    cullGroups: pileGroups,
     // The nearest branch still lying within reach, or -1.
     nearest(pos: THREE.Vector3, reach: number) {
       let best = -1;
@@ -453,6 +552,7 @@ export function createCampfire(saved: CampfireSave | undefined, trees: { x: numb
 
   return {
     group,
+    cullGroups: branches.cullGroups,
     light,
     get pack() {
       return pack;
