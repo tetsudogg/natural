@@ -7,7 +7,19 @@ import { HALF, streamDist } from './world';
 import { groundHeight, groundSlope } from './terrain';
 import { mulberry32 } from './noise';
 import { deadLeafAtlas, fallenLeavesTexture, surface } from './textures';
-import { chunked, type Placement } from './vegetation';
+import { chunked, photoRock, rockGeometry, windUniforms, type Placement } from './vegetation';
+
+// Leaves on the ground are kept out of the fire pit (the same circle that clears plants).
+function clearUnderFire(shader: THREE.WebGLProgramParametersWithUniforms, margin: number) {
+  shader.uniforms.uClear = windUniforms.uClear;
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nuniform vec3 uClear;')
+    .replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+      transformed *= step(uClear.z + ${margin.toFixed(2)}, distance(instanceMatrix[3].xz, uClear.xy)) + step(uClear.z, 0.0);`,
+    );
+}
 
 export const BRANCHES_TO_BUILD = 5;
 export const PACK_MAX = 20;
@@ -107,6 +119,7 @@ function createLeafPiles(spots: { x: number; z: number; r: number }[]) {
   // Both sides of a leaf are lit as its top, so flipped leaves don't turn grey-blue.
   mat.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader.replace('float faceDirection = gl_FrontFacing ? 1.0 : - 1.0;', 'float faceDirection = 1.0;');
+    clearUnderFire(shader, 0.9);
   };
   const kinds: Placement[][] = [[], [], []];
   const up = new THREE.Vector3(0, 1, 0);
@@ -142,6 +155,7 @@ function createLeafLitter(spots: { x: number; z: number; r: number }[]) {
   textures.forEach((map, k) => {
     const mine = spots.filter((_, i) => i % 2 === k);
     const mat = new THREE.MeshStandardMaterial({ map, alphaTest: 0.5, roughness: 0.95, side: THREE.DoubleSide });
+    mat.onBeforeCompile = (shader) => clearUnderFire(shader, 0.8);
     const mesh = new THREE.InstancedMesh(geo, mat, mine.length);
     mine.forEach((p, i) => {
       const y = groundHeight(p.x, p.z);
@@ -286,11 +300,7 @@ const FLAME_VERT = /* glsl */ `
 
 // A flame drawn from rising, stretched noise: hot white-yellow at the core,
 // orange and red toward the ragged edges and tip.
-const FLAME_FRAG = /* glsl */ `
-  uniform float uTime;
-  uniform float uPower;
-  uniform float uSeed;
-  varying vec2 vUv;
+const NOISE_GLSL = /* glsl */ `
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
   float noise(vec2 p) {
     vec2 i = floor(p), f = fract(p);
@@ -299,24 +309,100 @@ const FLAME_FRAG = /* glsl */ `
   }
   float fbm(vec2 p) {
     float v = 0.0, a = 0.5;
-    for (int i = 0; i < 4; i++) { v += a * noise(p); p *= 2.1; a *= 0.5; }
+    for (int i = 0; i < 5; i++) { v += a * noise(p); p = p * 2.03 + 17.1; a *= 0.5; }
     return v;
   }
+`;
+
+// A tongue of flame. Turbulent noise rushes upward through a narrowing shape, so
+// the flame licks, splits and throws off wisps at the top. Colour follows the
+// temperature: a white-yellow core, orange body, deep red at the ragged tips,
+// and a faint blue where it leaves the wood.
+const FLAME_FRAG = /* glsl */ `
+  uniform float uTime;
+  uniform float uPower;
+  uniform float uSeed;
+  varying vec2 vUv;
+  ${NOISE_GLSL}
   void main() {
     vec2 uv = vUv;
-    float t = uTime * 1.6 + uSeed * 10.0;
-    // Flicker sideways more toward the top.
-    uv.x += (fbm(vec2(uv.y * 3.0 - t, uSeed)) - 0.5) * 0.35 * uv.y;
-    float n = fbm(vec2(uv.x * 4.0 + uSeed, uv.y * 3.0 - t * 1.4));
-    // Teardrop: wide at the bottom, narrowing to a tip.
-    float width = mix(0.46, 0.07, pow(uv.y, 0.9));
-    float d = abs(uv.x - 0.5) / width;
-    float body = (1.0 - d) * (1.0 - uv.y * 0.85) + (n - 0.5) * 0.9;
-    float a = smoothstep(0.0, 0.35, body) * smoothstep(0.0, 0.08, uv.y) * uPower;
-    float heat = clamp(body * 1.3 + 0.2 - uv.y * 0.5, 0.0, 1.0);
-    vec3 col = mix(vec3(0.9, 0.18, 0.02), vec3(1.0, 0.55, 0.1), smoothstep(0.1, 0.5, heat));
-    col = mix(col, vec3(1.0, 0.92, 0.65), smoothstep(0.6, 1.0, heat));
-    gl_FragColor = vec4(col * (1.6 + heat * 2.0) * a * (uSeed > 0.2 ? 0.7 : 1.0), a);
+    float t = uTime + uSeed * 31.0;
+    float x = (uv.x - 0.5) * 2.0;
+    // Rising turbulence bends the flame more the higher it goes.
+    float n1 = fbm(vec2(x * 1.6 + uSeed * 9.0, uv.y * 2.0 - t * 2.4));
+    float n2 = fbm(vec2(x * 4.0 - uSeed * 5.0, uv.y * 5.0 - t * 4.6));
+    x += ((n1 - 0.5) * 0.9 + (n2 - 0.5) * 0.35) * uv.y;
+    float w = mix(0.95, 0.08, pow(uv.y, 0.65));
+    float body = 1.0 - abs(x) / w;
+    // Pockets of cooler gas break the flame apart as they rise.
+    float holes = fbm(vec2(x * 2.5 + uSeed * 3.0, uv.y * 3.2 - t * 3.4));
+    float f = body * 1.45 - uv.y * 0.85 + (holes - 0.5) * 1.1;
+    f *= smoothstep(0.0, 0.1, uv.y) * smoothstep(0.0, 0.12, 1.0 - uv.y);
+    float a = smoothstep(0.0, 0.22, f);
+    float heat = clamp(f * 1.5, 0.0, 1.0);
+    vec3 col = mix(vec3(0.55, 0.06, 0.01), vec3(1.0, 0.32, 0.04), smoothstep(0.0, 0.35, heat));
+    col = mix(col, vec3(1.0, 0.68, 0.22), smoothstep(0.35, 0.7, heat));
+    col = mix(col, vec3(1.0, 0.82, 0.48), smoothstep(0.75, 1.0, heat));
+    col += vec3(0.08, 0.12, 0.45) * (1.0 - smoothstep(0.02, 0.14, uv.y)) * smoothstep(0.1, 0.5, body);
+    a *= uPower;
+    gl_FragColor = vec4(col * (0.8 + heat * 1.4) * a, a);
+  }
+`;
+
+// A bed of glowing coals: dark charcoal lumps split by cracks that glow and breathe.
+const COALS_VERT = /* glsl */ `
+  varying vec2 vP;
+  varying vec3 vN;
+  varying vec3 vView;
+  void main() {
+    vP = position.xz;
+    vN = normalize(normalMatrix * normal);
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vView = -mv.xyz;
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+const COALS_FRAG = /* glsl */ `
+  uniform float uTime;
+  uniform float uGlow;
+  uniform vec3 uAmbient;
+  varying vec2 vP;
+  varying vec3 vN;
+  varying vec3 vView;
+  ${NOISE_GLSL}
+  vec2 cell(vec2 p) {
+    // Distance to the nearest and second-nearest lump centre.
+    vec2 i = floor(p), f = fract(p);
+    float d1 = 8.0, d2 = 8.0;
+    for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+      vec2 g = vec2(float(x), float(y));
+      vec2 o = vec2(hash(i + g), hash(i + g + 7.3));
+      float d = length(g + o - f);
+      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+    }
+    return vec2(d1, d2);
+  }
+  void main() {
+    // Warp the lumps so they are irregular, not a tiled pattern.
+    vec2 w = vP * 11.0 + (vec2(fbm(vP * 6.0), fbm(vP * 6.0 + 4.3)) - 0.5) * 2.2;
+    vec2 c = cell(w);
+    float crack = 1.0 - smoothstep(0.0, 0.06 + fbm(vP * 20.0) * 0.12, c.y - c.x);
+    // Only some cracks glow at any moment.
+    crack *= smoothstep(0.35, 0.65, fbm(vP * 7.0 + uTime * 0.15));
+    float r = length(vP) / 0.36;
+    // Hottest in the middle, breathing slowly in patches.
+    float breathe = 0.55 + 0.45 * sin(uTime * 1.3 + fbm(vP * 9.0) * 12.0);
+    float heat = uGlow * (1.0 - smoothstep(0.2, 0.95, r)) * breathe;
+    float surface = fbm(vP * 40.0);
+    vec3 charcoal = vec3(0.035, 0.03, 0.028) * (0.6 + surface * 0.8);
+    // Grey ash on the cooler lumps.
+    charcoal = mix(charcoal, vec3(0.2, 0.19, 0.18), smoothstep(0.5, 0.75, surface) * (1.0 - heat));
+    vec3 lit = charcoal * (uAmbient + vec3(1.0, 0.45, 0.15) * uGlow * 1.5) ;
+    vec3 glowCol = mix(vec3(0.7, 0.08, 0.01), vec3(1.0, 0.45, 0.08), heat);
+    vec3 col = lit + glowCol * heat * (crack * 2.6 + smoothstep(0.45, 0.1, c.x) * 0.6 * surface);
+    float edge = 1.0 - smoothstep(0.8, 1.0, r);
+    if (edge <= 0.0) discard;
+    gl_FragColor = vec4(col, edge);
   }
 `;
 
@@ -333,7 +419,7 @@ const PARTICLE_VERT = /* glsl */ `
     vLife = life;
     vSeed = seed;
     vec3 p = position;
-    float rise = uSmoke > 0.5 ? 0.3 + life * 7.0 : life * (1.4 + seed * 1.6);
+    float rise = uSmoke > 0.5 ? 0.9 + life * 7.0 : life * (1.4 + seed * 1.6);
     p.y += rise;
     // Wander and a steady drift with the breeze.
     p.x += sin(life * 6.0 + seed * 40.0) * (uSmoke > 0.5 ? 0.5 : 0.25) * life + life * life * (uSmoke > 0.5 ? 2.5 : 0.3);
@@ -365,9 +451,9 @@ const SMOKE_FRAG = /* glsl */ `
     vec2 c = gl_PointCoord - 0.5;
     float r = length(c);
     float wisp = 0.75 + 0.25 * sin(atan(c.y, c.x) * 3.0 + vSeed * 20.0);
-    float a = smoothstep(0.5 * wisp, 0.0, r) * smoothstep(0.0, 0.15, vLife) * (1.0 - vLife) * 0.16 * uPower;
+    float a = smoothstep(0.5 * wisp, 0.0, r) * smoothstep(0.08, 0.4, vLife) * (1.0 - vLife) * 0.14 * uPower;
     // Low smoke catches the firelight.
-    vec3 col = uColor + vec3(0.6, 0.25, 0.06) * (1.0 - smoothstep(0.0, 0.35, vLife)) * uFire;
+    vec3 col = uColor + vec3(0.25, 0.1, 0.03) * (1.0 - smoothstep(0.1, 0.5, vLife)) * uFire;
     gl_FragColor = vec4(col, a);
   }
 `;
@@ -382,17 +468,31 @@ interface FireState {
 function createFirePit() {
   const group = new THREE.Group();
   const rnd = mulberry32(77);
-  const rock = surface('rock');
-  // A ring of stones.
-  const stoneMat = new THREE.MeshStandardMaterial({ map: rock.map, normalMap: rock.normal, roughness: 0.9, color: 0xb8b0a6 });
+  // A ring of real, uneven stones, blackened with soot on the side facing the fire.
+  const stoneMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
+  photoRock(stoneMat);
   const stones: THREE.BufferGeometry[] = [];
-  for (let i = 0; i < 10; i++) {
-    const a = (i / 10) * Math.PI * 2 + rnd() * 0.2;
-    const g = new THREE.DodecahedronGeometry(0.13 + rnd() * 0.05, 1);
-    g.scale(1.2, 0.7, 1);
-    g.rotateY(a);
-    g.translate(Math.cos(a) * 0.62, 0.04, Math.sin(a) * 0.62);
-    stones.push(g.toNonIndexed());
+  const count = 11;
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2 + (rnd() - 0.5) * 0.25;
+    const g = rockGeometry(900 + i, false);
+    const s = 0.12 + rnd() * 0.07;
+    g.scale(s * (1.1 + rnd() * 0.4), s * (0.8 + rnd() * 0.4), s);
+    g.rotateY(a + (rnd() - 0.5) * 0.6);
+    const ox = Math.cos(a) * (0.6 + rnd() * 0.05);
+    const oz = Math.sin(a) * (0.6 + rnd() * 0.05);
+    g.translate(ox, s * 0.12, oz);
+    const pos = g.attributes.position as THREE.BufferAttribute;
+    const nor = g.attributes.normal as THREE.BufferAttribute;
+    const col = g.attributes.color as THREE.BufferAttribute;
+    for (let v = 0; v < pos.count; v++) {
+      // Soot where the stone faces the fire and low down.
+      const inward = -(nor.getX(v) * Math.cos(a) + nor.getZ(v) * Math.sin(a));
+      const soot = THREE.MathUtils.smoothstep(inward, -0.2, 0.7) * 0.8;
+      const k = col.getX(v) * (1 - soot * 0.85);
+      col.setXYZ(v, k, k * 0.97, k * 0.94);
+    }
+    stones.push(g.index ? g.toNonIndexed() : g);
   }
   const ring = new THREE.Mesh(mergeGeometries(stones)!, stoneMat);
   ring.castShadow = true;
@@ -401,71 +501,131 @@ function createFirePit() {
 
   // Scorched earth and ash inside the ring.
   const ashCanvas = document.createElement('canvas');
-  ashCanvas.width = ashCanvas.height = 128;
+  ashCanvas.width = ashCanvas.height = 256;
   const ctx = ashCanvas.getContext('2d')!;
-  const grad = ctx.createRadialGradient(64, 64, 4, 64, 64, 64);
-  grad.addColorStop(0, 'rgba(40,36,32,1)');
-  grad.addColorStop(0.5, 'rgba(60,55,50,0.95)');
-  grad.addColorStop(1, 'rgba(40,34,28,0)');
+  const grad = ctx.createRadialGradient(128, 128, 8, 128, 128, 128);
+  grad.addColorStop(0, 'rgba(22,20,18,1)');
+  grad.addColorStop(0.55, 'rgba(38,35,32,0.95)');
+  grad.addColorStop(0.8, 'rgba(30,26,22,0.6)');
+  grad.addColorStop(1, 'rgba(30,26,22,0)');
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 128, 128);
-  for (let i = 0; i < 300; i++) {
-    const g = 90 + rnd() * 90;
-    ctx.fillStyle = `rgba(${g},${g * 0.97},${g * 0.93},${0.3 + rnd() * 0.4})`;
-    const r = rnd() * 40;
+  ctx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 1400; i++) {
+    const g = 70 + rnd() * 110;
+    ctx.fillStyle = `rgba(${g},${g * 0.97},${g * 0.93},${0.15 + rnd() * 0.35})`;
+    const r = Math.pow(rnd(), 0.7) * 100;
     const a = rnd() * Math.PI * 2;
-    ctx.fillRect(64 + Math.cos(a) * r, 64 + Math.sin(a) * r, 1 + rnd() * 2, 1 + rnd() * 2);
+    ctx.fillRect(128 + Math.cos(a) * r, 128 + Math.sin(a) * r, 1 + rnd() * 2.5, 1 + rnd() * 2.5);
   }
   const ashTex = new THREE.CanvasTexture(ashCanvas);
   ashTex.colorSpace = THREE.SRGBColorSpace;
-  const ash = new THREE.Mesh(new THREE.CircleGeometry(0.75, 24).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: ashTex, transparent: true, depthWrite: false, roughness: 1 }));
-  ash.position.y = 0.02;
+  const ash = new THREE.Mesh(new THREE.CircleGeometry(0.85, 32).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: ashTex, transparent: true, depthWrite: false, roughness: 1 }));
+  ash.position.y = 0.015;
   ash.receiveShadow = true;
   group.add(ash);
 
-  // Branches stacked into a small teepee. Their lower ends glow with heat.
+  // A low heap of glowing coals in the middle.
+  const coalGeo = new THREE.PlaneGeometry(0.8, 0.8, 28, 28);
+  coalGeo.rotateX(-Math.PI / 2);
+  {
+    const p = coalGeo.attributes.position as THREE.BufferAttribute;
+    const crnd = mulberry32(5);
+    for (let i = 0; i < p.count; i++) {
+      const r = Math.min(1, Math.hypot(p.getX(i), p.getZ(i)) / 0.4);
+      p.setY(i, 0.02 + 0.07 * Math.pow(1 - r, 1.5) + crnd() * 0.012 * (1 - r));
+    }
+    coalGeo.computeVertexNormals();
+  }
   const glow = { value: 0 };
-  const woodMat = new THREE.MeshStandardMaterial({ map: surface('bark').map, color: 0x6a5a4c, roughness: 0.95 });
+  const coalMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uGlow: glow, uAmbient: { value: new THREE.Color(0.05, 0.05, 0.06) } },
+    vertexShader: COALS_VERT,
+    fragmentShader: COALS_FRAG,
+    transparent: true,
+  });
+  const coals = new THREE.Mesh(coalGeo, coalMat);
+  group.add(coals);
+
+  // Split logs leaning together over the coals: bark outside, charred and glowing
+  // cracks where the fire has eaten into them, black burnt ends.
+  const woodMat = new THREE.MeshStandardMaterial({ map: surface('bark').map, normalMap: surface('bark').normal, color: 0x8a7866, roughness: 0.95 });
   woodMat.onBeforeCompile = (shader) => {
     shader.uniforms.uGlow = glow;
+    shader.uniforms.uTime = coalMat.uniforms.uTime;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying float vH;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvH = position.y;');
+      .replace('#include <common>', '#include <common>\nattribute float burn;\nvarying float vBurn;\nvarying vec3 vLocal;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvBurn = burn;\nvLocal = position;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uGlow;\nvarying float vH;')
+      .replace('#include <common>', `#include <common>\nuniform float uGlow;\nuniform float uTime;\nvarying float vBurn;\nvarying vec3 vLocal;\n${NOISE_GLSL}`)
       .replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
         {
-          // Charred, glowing ends near the heart of the fire.
-          float hot = smoothstep(0.35, 0.0, vH) * uGlow;
-          float cracks = smoothstep(0.35, 0.8, texture2D(map, vMapUv * 3.0).r);
-          diffuseColor.rgb *= mix(1.0, 0.25, smoothstep(0.5, 0.0, vH));
-          totalEmissiveRadiance += vec3(1.0, 0.32, 0.06) * hot * (0.4 + cracks * 2.5);
+          // Charring creeps up from the hot end in a ragged line.
+          float edge = vBurn + (fbm(vLocal.xz * 30.0 + vLocal.y * 12.0) - 0.5) * 0.35;
+          float char = smoothstep(0.35, 0.6, edge);
+          // Charcoal splits into a checker of blocks; the cracks glow.
+          vec2 q = vec2(atan(vLocal.x, vLocal.z) * 4.0, vLocal.y * 38.0);
+          float n = fbm(q * 1.5);
+          // Thin ridges of a noise field make a web of fine cracks.
+          float rn = (noise(q * 2.0) + 0.5 * noise(q * 4.3 + 3.1)) / 1.5;
+          float cracks = smoothstep(0.94, 1.0, 1.0 - abs(rn * 2.0 - 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.012, 0.011, 0.01) * (0.6 + n), char);
+          float hot = smoothstep(0.55, 0.95, edge) * uGlow * (0.7 + 0.3 * sin(uTime * 2.0 + n * 20.0));
+          totalEmissiveRadiance += mix(vec3(0.8, 0.1, 0.01), vec3(1.0, 0.42, 0.07), hot) * hot * (0.015 + clamp(cracks, 0.0, 1.0) * 0.8);
         }`,
       );
   };
-  const sticks: THREE.BufferGeometry[] = [];
-  for (let i = 0; i < 7; i++) {
-    const a = (i / 7) * Math.PI * 2 + rnd() * 0.3;
-    const l = 0.75 + rnd() * 0.2;
-    const g = new THREE.CylinderGeometry(0.022, 0.035, l, 6);
+  const logs: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + rnd() * 0.4;
+    const l = 0.62 + rnd() * 0.2;
+    const r = 0.04 + rnd() * 0.022;
+    const g = new THREE.CylinderGeometry(r * 0.85, r, l, 9, 8);
+    // Slightly crooked, not a perfect pipe.
+    const p = g.attributes.position as THREE.BufferAttribute;
+    const bend = (rnd() - 0.5) * 0.06;
+    const burn = new Float32Array(p.count);
+    for (let v = 0; v < p.count; v++) {
+      const y = THREE.MathUtils.clamp(p.getY(v) / l + 0.5, 0, 1); // 0 at the foot, 1 at the top
+      p.setX(v, p.getX(v) + Math.sin(y * Math.PI) * bend);
+      // The upper end sits in the fire, so it burns most.
+      burn[v] = Math.pow(y, 1.3);
+    }
+    g.setAttribute('burn', new THREE.BufferAttribute(burn, 1));
+    g.computeVertexNormals();
     g.translate(0, l / 2, 0);
-    g.rotateX(0.55 + rnd() * 0.1);
-    g.rotateY(-a);
-    g.translate(Math.sin(a) * 0.32, 0.02, Math.cos(a) * 0.32);
-    sticks.push(g.toNonIndexed());
+    // Lean inward so the tops meet above the coals.
+    g.rotateX(-(0.62 + rnd() * 0.12));
+    g.rotateY(a);
+    g.translate(Math.sin(a) * 0.36, 0.03, Math.cos(a) * 0.36);
+    logs.push(g.toNonIndexed());
   }
-  const wood = new THREE.Mesh(mergeGeometries(sticks)!, woodMat);
+  // A couple of short lengths lying in the coals.
+  for (let i = 0; i < 2; i++) {
+    const l = 0.35 + rnd() * 0.1;
+    const g = new THREE.CylinderGeometry(0.035, 0.04, l, 8, 4);
+    const p = g.attributes.position as THREE.BufferAttribute;
+    const burn = new Float32Array(p.count).fill(0.85);
+    g.setAttribute('burn', new THREE.BufferAttribute(burn, 1));
+    g.rotateZ(Math.PI / 2);
+    g.rotateY(rnd() * Math.PI);
+    g.translate((rnd() - 0.5) * 0.15, 0.07, (rnd() - 0.5) * 0.15);
+    logs.push(g.toNonIndexed());
+  }
+  const wood = new THREE.Mesh(mergeGeometries(logs)!, woodMat);
   wood.castShadow = true;
+  wood.receiveShadow = true;
   group.add(wood);
 
-  // Flames: a few crossed cards that always turn to face the camera around the upright axis.
+  // Flames: many tongues of different sizes, each a card turned to the camera around
+  // the upright axis. A few tall ones rise from the middle; smaller ones lick along
+  // the logs and coals.
   const flames = new THREE.Group();
   const flameMats: THREE.ShaderMaterial[] = [];
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 11; i++) {
     const mat = new THREE.ShaderMaterial({
-      uniforms: { uTime: { value: 0 }, uPower: { value: 0 }, uSeed: { value: i * 0.37 + 0.1 } },
+      uniforms: { uTime: { value: 0 }, uPower: { value: 0 }, uSeed: { value: rnd() } },
       vertexShader: FLAME_VERT,
       fragmentShader: FLAME_FRAG,
       transparent: true,
@@ -474,10 +634,14 @@ function createFirePit() {
       side: THREE.DoubleSide,
     });
     flameMats.push(mat);
-    const w = i === 0 ? 0.9 : 0.4 + rnd() * 0.2;
-    const h = i === 0 ? 1.05 : 0.55 + rnd() * 0.35;
+    const big = i < 3;
+    const w = big ? 0.6 + rnd() * 0.15 : 0.32 + rnd() * 0.16;
+    const h = big ? 0.85 + rnd() * 0.3 : 0.35 + rnd() * 0.3;
     const card = new THREE.Mesh(new THREE.PlaneGeometry(w, h).translate(0, h / 2, 0), mat);
-    card.position.set(i === 0 ? 0 : (rnd() - 0.5) * 0.4, 0.05, i === 0 ? 0 : (rnd() - 0.5) * 0.4);
+    const a = rnd() * Math.PI * 2;
+    const r = big ? rnd() * 0.08 : 0.08 + rnd() * 0.2;
+    card.position.set(Math.cos(a) * r, big ? 0.06 : 0.04 + rnd() * 0.1, Math.sin(a) * r);
+    card.userData.phase = rnd() * 10;
     card.renderOrder = 3;
     flames.add(card);
   }
@@ -516,7 +680,7 @@ function createFirePit() {
   const light = new THREE.PointLight(0xff8a3a, 0, 14, 1.6);
   light.position.set(0, 0.7, 0);
 
-  return { group, light, flames, flameMats, sparks, smoke, glow };
+  return { group, light, flames, flameMats, sparks, smoke, glow, coalMat };
 }
 
 export interface CampfireSave {
@@ -648,8 +812,12 @@ export function createCampfire(saved: CampfireSave | undefined, trees: { x: numb
       camera.getWorldPosition(tmp);
       pit.flames.children.forEach((c, i) => {
         c.lookAt(tmp.x, c.getWorldPosition(new THREE.Vector3()).y, tmp.z);
-        c.scale.setScalar(0.35 + power * 0.75 + Math.sin(time * 7 + i * 2) * 0.03);
-        c.visible = power > 0.01;
+        const ph = c.userData.phase as number;
+        const size = 0.3 + power * 0.75;
+        // Each tongue grows and shrinks on its own irregular rhythm.
+        const surge = 1 + 0.12 * Math.sin(time * 5.3 + ph) + 0.08 * Math.sin(time * 8.9 + ph * 2.1);
+        c.scale.set(size, size * surge, size);
+        c.visible = power > 0.01 && (i < 3 || power > 0.25);
       });
       for (const m of pit.flameMats) {
         m.uniforms.uTime.value = time;
@@ -663,10 +831,12 @@ export function createCampfire(saved: CampfireSave | undefined, trees: { x: numb
       pit.sparks.visible = power > 0.05;
       pit.smoke.visible = power > 0.01 || embers > 0.02;
       pit.glow.value = Math.max(power, embers * 0.6);
+      pit.coalMat.uniforms.uTime.value = time;
+      pit.coalMat.uniforms.uAmbient.value.setScalar(0.02 + daylight * 0.35);
       // Flicker: a few layered wobbles so it never repeats.
       const flick = 0.82 + 0.1 * Math.sin(time * 11.3) + 0.06 * Math.sin(time * 23.7 + 1.3) + 0.05 * Math.sin(time * 5.1 + 0.4);
       light.intensity = (power * 9 + embers * 0.8) * flick;
-      light.position.y = pit.group.position.y + 0.55 + power * 0.25;
+      light.position.y = pit.group.position.y + 0.85 + power * 0.25;
     },
   };
 }

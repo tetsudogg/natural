@@ -315,7 +315,7 @@ function grassClumpGeometry() {
 
 // Rocks are textured with photos projected from three sides in world space
 // (no stretched seams on the lumpy shapes), stone below and moss where 'moss' says.
-function photoRock(mat: THREE.MeshStandardMaterial) {
+export function photoRock(mat: THREE.MeshStandardMaterial) {
   const rock = surface('rock');
   const moss = surface('moss');
   mat.onBeforeCompile = (shader) => {
@@ -377,7 +377,7 @@ function photoRock(mat: THREE.MeshStandardMaterial) {
 
 // A boulder: a lumpy sphere cut by a few flat fracture planes, with a flat underside.
 // Mossy rocks get moss on their upward-facing parts ('moss' attribute).
-function rockGeometry(seed: number, mossy: boolean) {
+export function rockGeometry(seed: number, mossy: boolean) {
   const rnd = mulberry32(seed);
   const g = new THREE.IcosahedronGeometry(1, 3);
   const p = g.attributes.position as THREE.BufferAttribute;
