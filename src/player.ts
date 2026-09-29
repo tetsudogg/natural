@@ -21,6 +21,8 @@ export class Player {
   private stepPhase = 0;
   private bob = 0;
   private camDist = 4.2;
+  // Something solid (the tent) that can't be walked into.
+  blocker: ((x: number, z: number) => boolean) | null = null;
   onStep: ((ground: 'grass' | 'gravel' | 'forest', running: boolean) => void) | null = null;
 
   constructor(x: number, z: number, yaw: number) {
@@ -70,7 +72,7 @@ export class Player {
     // Too steep to climb: stay put.
     const rise = groundHeight(next.x, next.z) - groundHeight(this.position.x, this.position.z);
     const run = Math.hypot(next.x - this.position.x, next.z - this.position.z);
-    if (run > 0 && rise / run < 1.4) {
+    if (run > 0 && rise / run < 1.4 && !this.blocker?.(next.x, next.z)) {
       this.position.x = next.x;
       this.position.z = next.z;
     }

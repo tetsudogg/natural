@@ -201,6 +201,19 @@ kbd {
   opacity: 1;
 }
 
+#fade {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1.4s ease;
+}
+
+#fade.show {
+  opacity: 1;
+}
+
 #pack {
   position: fixed;
   right: 20px;

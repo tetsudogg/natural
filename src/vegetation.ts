@@ -14,9 +14,21 @@ export const windUniforms = {
   // Sun direction in view space and its colour, for light shining through leaves.
   uSunView: { value: new THREE.Vector3(0, 1, 0) },
   uSunColor: { value: new THREE.Color(1, 1, 1) },
-  // Plants inside this circle (x, z, radius) are hidden, e.g. under a campfire.
+  // Plants inside these circles (x, z, radius) are hidden: under the campfire and the tent.
   uClear: { value: new THREE.Vector3(0, 0, 0) },
+  uClear2: { value: new THREE.Vector3(0, 0, 0) },
 };
+
+// 0 inside a cleared circle (grown by margin), 1 elsewhere.
+export const CLEAR_GLSL = `
+  uniform vec3 uClear;
+  uniform vec3 uClear2;
+  float clearMask(vec2 p, float margin) {
+    float a = uClear.z > 0.0 ? step(uClear.z + margin, distance(p, uClear.xy)) : 1.0;
+    float b = uClear2.z > 0.0 ? step(uClear2.z + margin, distance(p, uClear2.xy)) : 1.0;
+    return a * b;
+  }
+`;
 
 // Colours are written as they look on screen (sRGB) and converted for lighting.
 export const srgb = (r: number, g: number, b: number) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace);
@@ -49,8 +61,9 @@ function addWind(mat: THREE.Material, o: WindOptions) {
     shader.uniforms.uTime = windUniforms.uTime;
     shader.uniforms.uWind = windUniforms.uWind;
     shader.uniforms.uClear = windUniforms.uClear;
+    shader.uniforms.uClear2 = windUniforms.uClear2;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\nuniform float uTime;\nuniform float uWind;\nuniform vec3 uClear;\n${WIND_NOISE}`)
+      .replace('#include <common>', `#include <common>\nuniform float uTime;\nuniform float uWind;\n${CLEAR_GLSL}\n${WIND_NOISE}`)
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
@@ -75,7 +88,7 @@ function addWind(mat: THREE.Material, o: WindOptions) {
           transformed.z += (wdir.y * (gust * 0.8 + sway * 0.9) + wdir.x * cross * 0.6) * amt;
           ${o.foliage ? `// Leaves tremble a little, more toward the tip.
           transformed += normal * ${(o.amount * 0.08).toFixed(4)} * k * (wNoise(vec2(t * 2.5 + position.x * 1.7, position.z * 1.3 + ip.z)) - 0.5) * (0.3 + uWind);` : ''}
-          ${o.height < 5 ? '// Cleared ground (a campfire) has no small plants.\n          transformed *= step(uClear.z, distance(ip.xz, uClear.xy));' : ''}
+          ${o.height < 5 ? '// Cleared ground (a campfire) has no small plants.\n          transformed *= clearMask(ip.xz, 0.0);' : ''}
         }`,
       );
     if (o.foliage) {

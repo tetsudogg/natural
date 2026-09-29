@@ -7,18 +7,15 @@ import { HALF, streamDist } from './world';
 import { groundHeight, groundSlope } from './terrain';
 import { mulberry32 } from './noise';
 import { deadLeafAtlas, fallenLeavesTexture, surface } from './textures';
-import { chunked, photoRock, rockGeometry, windUniforms, type Placement } from './vegetation';
+import { CLEAR_GLSL, chunked, photoRock, rockGeometry, windUniforms, type Placement } from './vegetation';
 
-// Leaves on the ground are kept out of the fire pit (the same circle that clears plants).
+// Leaves on the ground are kept out of the fire pit and from under the tent.
 function clearUnderFire(shader: THREE.WebGLProgramParametersWithUniforms, margin: number) {
   shader.uniforms.uClear = windUniforms.uClear;
+  shader.uniforms.uClear2 = windUniforms.uClear2;
   shader.vertexShader = shader.vertexShader
-    .replace('#include <common>', '#include <common>\nuniform vec3 uClear;')
-    .replace(
-      '#include <begin_vertex>',
-      `#include <begin_vertex>
-      transformed *= step(uClear.z + ${margin.toFixed(2)}, distance(instanceMatrix[3].xz, uClear.xy)) + step(uClear.z, 0.0);`,
-    );
+    .replace('#include <common>', `#include <common>\n${CLEAR_GLSL}`)
+    .replace('#include <begin_vertex>', `#include <begin_vertex>\n      transformed *= clearMask(instanceMatrix[3].xz, ${margin.toFixed(2)});`);
 }
 
 export const BRANCHES_TO_BUILD = 5;
@@ -773,13 +770,14 @@ export function createCampfire(saved: CampfireSave | undefined, trees: { x: numb
       return `枝を拾いました（${pack} 本）`;
     },
     // B: build and light a fire in front of the player.
-    build(pos: THREE.Vector3, yaw: number): string {
+    build(pos: THREE.Vector3, yaw: number, tooClose?: (x: number, z: number) => boolean): string {
       if (fire && fire.fuel > 0) return 'もう焚き火があります（E で枝をくべる）';
       if (pack < BRANCHES_TO_BUILD) return `焚き火には枝が ${BRANCHES_TO_BUILD} 本いります（今 ${pack} 本）`;
       const x = pos.x - Math.sin(yaw) * 1.8;
       const z = pos.z - Math.cos(yaw) * 1.8;
       if (streamDist(x, z) < 6) return '水辺からもう少し離れてください';
       if (groundSlope(x, z) > 0.35) return 'もう少し平らな場所を選んでください';
+      if (tooClose?.(x, z)) return 'テントから少し離してください';
       pack -= BRANCHES_TO_BUILD;
       fire = { x, z, fuel: BRANCHES_TO_BUILD * HOURS_PER_BRANCH, ember: 0 };
       lit = 0;

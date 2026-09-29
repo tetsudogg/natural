@@ -6,6 +6,7 @@ import { createVegetation, updateDistanceCulling, windUniforms } from './vegetat
 import { createStream, createFireflies, NO_REFLECT_LAYER } from './water';
 import { createWildlife } from './wildlife';
 import { createCampfire, type CampfireSave } from './campfire';
+import { createTent, type TentSave } from './tent';
 import { createSky } from './sky';
 import { Player, type ViewMode } from './player';
 import { Soundscape } from './audio';
@@ -32,6 +33,7 @@ interface Save {
   speed: number;
   quality?: Quality;
   campfire?: CampfireSave;
+  tent?: TentSave | null;
 }
 
 const SAVE_KEY = 'natural.save.v1';
@@ -98,6 +100,8 @@ async function main() {
   const saved = loadSave();
   const campfire = createCampfire(saved?.campfire, veg.treeSpots);
   scene.add(campfire.group, campfire.light);
+  const tent = createTent(saved?.tent ?? undefined, veg.treeSpots);
+  scene.add(tent.group, tent.light);
   const post = createPost(renderer);
   // ?quality=low|medium|high overrides the saved choice (handy for testing).
   const qParam = new URLSearchParams(location.search).get('quality') as Quality | null;
@@ -122,6 +126,19 @@ async function main() {
     campfire.debugGive(8);
     toast(campfire.build(player.position, player.yaw));
     campfire.debugBlaze();
+  }
+  player.blocker = (x, z) => tent.blocks(x, z);
+  tent.avoid = () => campfire.clearing;
+  // ?debug exposes the game objects for automated checks.
+  if (new URLSearchParams(location.search).has('debug')) Object.assign(window, { natural: { tent, campfire, player } });
+  const nearTent = (x: number, z: number) => {
+    const t = tent.clearing;
+    return !!t && Math.hypot(t.x - x, t.z - z) < 3.2;
+  };
+  // ?tent=now pitches the tent just ahead; ?tent=inside also crawls in (for testing).
+  const tentParam = new URLSearchParams(location.search).get('tent');
+  if (tentParam) {
+    tent.debugPitch(player.position, player.yaw, tentParam === 'now' ? -0.6 : 0, tentParam === 'inside');
   }
 
   const sound = new Soundscape();
@@ -217,7 +234,10 @@ async function main() {
   });
 
   document.addEventListener('mousemove', (e) => {
-    if (document.pointerLockElement === canvas && !viewing) player.look(e.movementX, e.movementY);
+    if (document.pointerLockElement === canvas && !viewing) {
+      if (tent.inside) tent.look(e.movementX, e.movementY);
+      else player.look(e.movementX, e.movementY);
+    }
     if (viewing) {
       document.body.classList.add('pointer');
       clearTimeout(pointerTimer);
@@ -225,18 +245,54 @@ async function main() {
     }
   });
 
+  // Crawling out of the tent.
+  function leaveTent() {
+    const out = tent.exit();
+    if (out) {
+      player.position.set(out.x, player.position.y, out.z);
+      player.yaw = out.yaw;
+      player.pitch = -0.05;
+    }
+    player.setView(player.view);
+  }
+
+  // Sleep in the tent: fade to black, wake at six in the morning.
+  let sleeping = false;
+  function sleep() {
+    if (sleeping) return;
+    sleeping = true;
+    const fade = $('fade');
+    fade.classList.add('show');
+    sound.setVolume(0.15);
+    setTimeout(() => {
+      const skipped = (6 - hour + 24) % 24 || 24;
+      hour = 6;
+      // The fire keeps burning (or goes out) while you sleep.
+      campfire.update(elapsed, 0, skipped, camera, windUniforms.uWind.value, 0);
+      fade.classList.remove('show');
+      sound.setVolume(0.9);
+      setTimeout(() => toast('おはようございます'), 1200);
+      sleeping = false;
+    }, 3200);
+  }
+
   window.addEventListener('keydown', (e) => {
     if (!started) {
       if (e.code === 'Enter' || e.code === 'Space') start();
       return;
     }
     if (e.repeat) return;
+    if (tent.inside && !viewing && ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+      leaveTent();
+      return;
+    }
     switch (e.code) {
       case 'KeyV':
         viewing ? exitView() : enterView();
         return;
       case 'Escape':
         if (viewing) exitView();
+        else if (tent.placing) tent.cancel();
         return;
       case 'KeyC':
         if (viewing) {
@@ -260,14 +316,30 @@ async function main() {
         help.classList.toggle('off');
         return;
       case 'KeyE': {
-        if (viewing) return;
+        if (viewing || sleeping) return;
+        if (tent.inside) {
+          sleep();
+          return;
+        }
+        if (tent.enter(player.position)) {
+          player.releaseKeys();
+          player.body.visible = false;
+          toast('テントに入りました');
+          return;
+        }
         const msg = campfire.interact(player.position);
+        if (msg) toast(msg);
+        return;
+      }
+      case 'KeyP': {
+        if (viewing) return;
+        const msg = tent.pressP(player.position, elapsed);
         if (msg) toast(msg);
         return;
       }
       case 'KeyB':
         if (viewing) return;
-        toast(campfire.build(player.position, player.yaw));
+        toast(campfire.build(player.position, player.yaw, nearTent));
         return;
       case 'KeyQ':
         quality = QUALITIES[(QUALITIES.indexOf(quality) + 1) % QUALITIES.length];
@@ -289,7 +361,7 @@ async function main() {
   });
 
   const save = () =>
-    writeSave({ x: player.position.x, z: player.position.z, yaw: player.yaw, pitch: player.pitch, hour, view: player.view, speed: speedIndex, quality, campfire: campfire.save() });
+    writeSave({ x: player.position.x, z: player.position.z, yaw: player.yaw, pitch: player.pitch, hour, view: player.view, speed: speedIndex, quality, campfire: campfire.save(), tent: tent.save() });
   setInterval(() => started && save(), 5000);
   window.addEventListener('beforeunload', () => started && save());
 
@@ -329,12 +401,13 @@ async function main() {
     windUniforms.uTime.value = elapsed;
     windUniforms.uWind.value = 0.5 + 0.35 * Math.sin(elapsed * 0.13) * Math.sin(elapsed * 0.071);
 
-    player.update(dt, started && !viewing && document.pointerLockElement === canvas);
+    player.update(dt, started && !viewing && !tent.inside && document.pointerLockElement === canvas);
     if (viewing) {
       viewClock += dt;
       if (motion === 'pan') player.yaw = viewBaseYaw + Math.sin(viewClock * ((Math.PI * 2) / 140)) * 0.5;
     }
-    player.applyCamera(camera);
+    if (tent.inside) tent.applyInsideCamera(camera);
+    else player.applyCamera(camera);
 
     const day = sky.update(hour, player.position);
     stream.update(elapsed, day.sunDir, day.sunColor, day.sunIntensity, day.daylight);
@@ -342,11 +415,14 @@ async function main() {
     wildlife.update(elapsed, dt, day.daylight, player.position, camera);
     clouds.update(elapsed, player.position, day.sunDir, day.sunColor, day.daylight, day.night, day.fogColor);
     campfire.update(elapsed, dt, dt * TIME_SPEEDS[speedIndex].hoursPerSecond, camera, windUniforms.uWind.value, day.daylight);
+    tent.update(elapsed, dt, player, windUniforms.uWind.value, day.night);
+    const tc = tent.clearing;
+    windUniforms.uClear2.value.set(tc ? tc.x : 0, tc ? tc.z : 0, tc ? tc.r : 0);
     const fp = campfire.clearing;
     windUniforms.uClear.value.set(fp ? fp.x : 0, fp ? fp.z : 0, fp ? 1.25 : 0);
     sound.fire(campfire.firePosition, campfire.power);
     if (++hintTick % 10 === 0) {
-      const h = viewing ? null : campfire.hint(player.position);
+      const h = viewing ? null : (tent.hint(player.position) ?? campfire.hint(player.position));
       hintEl.textContent = h ?? '';
       hintEl.classList.toggle('show', !!h);
       packEl.textContent = campfire.pack > 0 ? `枝 ${campfire.pack} 本` : '';
