@@ -37,7 +37,7 @@ export const srgb = (r: number, g: number, b: number) => new THREE.Color().setRG
 // move together but never in lockstep and never on a fixed beat.
 // Plants bend from the base: nothing moves at the ground (or, for trees, below about the
 // middle of the trunk), and the bend grows toward the tip. Big trees bend less.
-interface WindOptions {
+export interface WindOptions {
   amount: number; // sideways movement at the tip, in metres, in a moderate breeze
   height: number; // height of the plant model (local units) where the tip is
   rigid?: number; // fraction of the height that stays still (trunks)
@@ -55,7 +55,7 @@ const WIND_NOISE = /* glsl */ `
   }
 `;
 
-function addWind(mat: THREE.Material, o: WindOptions) {
+export function addWind(mat: THREE.Material, o: WindOptions) {
   const rigid = o.rigid ?? 0;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = windUniforms.uTime;
@@ -554,6 +554,8 @@ function place(x: number, z: number, scale: number, yaw: number, sink = 0) {
 export interface TreeSpot {
   x: number;
   z: number;
+  s?: number; // size of the tree (1 = trunk about 0.34 m in radius at the foot)
+  cedar?: boolean;
 }
 
 export function createVegetation() {
@@ -580,12 +582,14 @@ export function createVegetation() {
       if (rnd() < Math.max(dens * 0.85, bank)) {
         const cedarZone = fbm(px * 0.008 + 5, pz * 0.008, 2) > 0.6;
         const tint = new THREE.Color().setHSL(0, 0, 0.8 + rnd() * 0.2, THREE.SRGBColorSpace);
-        if (cedarZone && d > 12) {
-          cedars.push({ m: place(px, pz, 0.7 + rnd() * 0.7, rnd() * 6.28, 0.2), c: tint });
+        const cedar = cedarZone && d > 12;
+        const size = 0.7 + rnd() * (cedar ? 0.7 : 0.8);
+        if (cedar) {
+          cedars.push({ m: place(px, pz, size, rnd() * 6.28, 0.2), c: tint });
         } else {
-          broad[Math.floor(rnd() * 3)].push({ m: place(px, pz, 0.7 + rnd() * 0.8, rnd() * 6.28, 0.2), c: tint });
+          broad[Math.floor(rnd() * 3)].push({ m: place(px, pz, size, rnd() * 6.28, 0.2), c: tint });
         }
-        treeSpots.push({ x: px, z: pz });
+        treeSpots.push({ x: px, z: pz, s: size, cedar });
       } else if (dens > 0.35 && d > 8 && rnd() < 0.35) {
         // Young trees fill the space under the canopy.
         saplings.push({ m: place(px + (rnd() - 0.5) * 2, pz + (rnd() - 0.5) * 2, 0.28 + rnd() * 0.2, rnd() * 6.28, 0.1), c: new THREE.Color().setHSL(0, 0, 0.85 + rnd() * 0.15, THREE.SRGBColorSpace) });

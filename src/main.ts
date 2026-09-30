@@ -5,6 +5,7 @@ import { createTerrain } from './terrain';
 import { createVegetation, updateDistanceCulling, windUniforms } from './vegetation';
 import { createStream, createFireflies, NO_REFLECT_LAYER } from './water';
 import { createBrooks } from './brooks';
+import { createForestFloor } from './forestfloor';
 import { createWildlife } from './wildlife';
 import { createCampfire, type CampfireSave } from './campfire';
 import { createTent, type TentSave } from './tent';
@@ -90,6 +91,8 @@ async function main() {
   scene.add(createTerrain());
   const veg = createVegetation();
   scene.add(veg.group);
+  const floor = createForestFloor(veg.treeSpots);
+  scene.add(floor.group);
   const stream = createStream();
   scene.add(stream.mesh);
   const brookWater = createBrooks();
@@ -137,7 +140,7 @@ async function main() {
   player.blocker = (x, z) => tent.blocks(x, z);
   tent.avoid = () => campfire.clearing;
   // ?debug exposes the game objects for automated checks.
-  if (new URLSearchParams(location.search).has('debug')) Object.assign(window, { natural: { tent, campfire, player } });
+  if (new URLSearchParams(location.search).has('debug')) Object.assign(window, { natural: { tent, campfire, player, floor } });
   const nearTent = (x: number, z: number) => {
     const t = tent.clearing;
     return !!t && Math.hypot(t.x - x, t.z - z) < 3.2;
@@ -462,6 +465,7 @@ async function main() {
       packEl.textContent = campfire.pack > 0 ? `枝 ${campfire.pack} 本` : '';
     }
     for (const g of veg.cullGroups) updateDistanceCulling(g, camera.position);
+    for (const g of floor.cullGroups) updateDistanceCulling(g, camera.position);
     for (const g of campfire.cullGroups) updateDistanceCulling(g, camera.position);
     sound.update(dt, camera, day.daylight, day.night, hour);
 

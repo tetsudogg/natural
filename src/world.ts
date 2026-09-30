@@ -127,12 +127,18 @@ interface BrookDef {
   length: number;
   turn: number; // overall lean upstream or downstream, radians
   seed: number;
+  size?: number; // width and depth, 1 for the main brooks
 }
 
 const BROOK_DEFS: BrookDef[] = [
   { z0: -108, side: 1, length: 170, turn: -0.35, seed: 11 },
   { z0: 48, side: -1, length: 175, turn: -0.3, seed: 23 },
   { z0: 172, side: 1, length: 150, turn: -0.25, seed: 37 },
+  // Smaller rills: narrow, just a trickle between the stones.
+  { z0: -220, side: -1, length: 110, turn: -0.3, seed: 51, size: 0.6 },
+  { z0: -30, side: -1, length: 95, turn: -0.25, seed: 63, size: 0.55 },
+  { z0: 100, side: 1, length: 120, turn: -0.3, seed: 71, size: 0.6 },
+  { z0: 250, side: -1, length: 100, turn: -0.3, seed: 83, size: 0.55 },
 ];
 
 export interface BrookFall {
@@ -158,6 +164,7 @@ let brookList: Brook[] | null = null;
 
 function buildBrook(def: BrookDef): Brook {
   const n = def.length;
+  const size = def.size ?? 1;
   const xs = new Float32Array(n);
   const zs = new Float32Array(n);
   let x = streamX(def.z0) + def.side * 2.5;
@@ -178,7 +185,7 @@ function buildBrook(def: BrookDef): Brook {
   const raw = new Float32Array(n);
   const mouth = waterLevel(def.z0) - 0.1;
   for (let i = 0; i < n; i++) {
-    const depth = 0.5 + 1.5 * smoothstep(4, 40, i) + 1.0 * fbm(i * 0.05, def.seed, 2);
+    const depth = (0.5 + 1.5 * smoothstep(4, 40, i) + 1.0 * fbm(i * 0.05, def.seed, 2)) * (0.5 + 0.5 * size);
     raw[i] = i < 4 ? mouth : Math.max(mouth, terrainNoBrooks(xs[i], zs[i]) - depth);
   }
   // Water runs downhill: the bed never rises going downstream.
@@ -194,9 +201,10 @@ function buildBrook(def: BrookDef): Brook {
   const bed = new Float32Array(n);
   const falls: BrookFall[] = [];
   const width = new Float32Array(n);
-  for (let i = 0; i < n; i++) width[i] = 0.55 + 0.5 * (1 - i / n) + 0.3 * fbm(i * 0.08, def.seed + 5, 2);
+  for (let i = 0; i < n; i++) width[i] = (0.55 + 0.5 * (1 - i / n) + 0.3 * fbm(i * 0.08, def.seed + 5, 2)) * size;
   let level = smooth[0];
-  let next = 0.6 + rnd() * 2.2;
+  const stepMax = 0.5 + 0.5 * size;
+  let next = (0.6 + rnd() * 2.2) * stepMax;
   const stepAt: number[] = [];
   for (let i = 0; i < n; i++) {
     const excess = smooth[i] - level;
@@ -204,7 +212,7 @@ function buildBrook(def: BrookDef): Brook {
       level = smooth[i];
       bed[i] = level;
       stepAt.push(i);
-      next = 0.6 + rnd() * 2.2;
+      next = (0.6 + rnd() * 2.2) * stepMax;
     } else {
       bed[i] = level + excess * 0.35;
     }
