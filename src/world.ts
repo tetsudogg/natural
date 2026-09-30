@@ -1,7 +1,7 @@
 // The shape of the valley: terrain height, the stream's path and the open clearings.
 // Everything else (trees, grass, water, sound) is placed from these functions.
 
-import { fbm, smoothstep } from './noise';
+import { fbm, mulberry32, smoothstep } from './noise';
 
 export const HALF = 300; // playable area is [-HALF, HALF] on x and z
 export const WALK_LIMIT = 285;
@@ -23,8 +23,11 @@ export function streamDist(x: number, z: number) {
 }
 
 // The valley floor falls gently toward +z, with one small waterfall.
-function floorHeight(z: number) {
-  return -z * 0.035 - 2.2 * smoothstep(WATERFALL_Z - 3, WATERFALL_Z + 3, z);
+// Away from the stream the waterfall's step fades into a long, gentle slope, so it
+// doesn't cut a straight ledge across the whole mountainside.
+function floorHeight(z: number, d = 0) {
+  const w = 3 + d * 0.8;
+  return -z * 0.035 - 2.2 * smoothstep(WATERFALL_Z - w, WATERFALL_Z + w, z);
 }
 
 export function waterLevel(z: number) {
@@ -63,25 +66,29 @@ export function forestDensity(x: number, z: number) {
   return f;
 }
 
-// Wide flat benches with short rises between them, so there are many places to sit or camp.
-function terrace(h: number, step: number) {
-  const k = h / step;
-  const f = Math.floor(k);
-  return (f + smoothstep(0.72, 1, k - f)) * step;
-}
-
-// Large-scale shape: a broad valley floor, benches on the valley sides, mountains beyond.
+// Large-scale shape: a gentle valley floor along the stream, then mountainsides that
+// get steeper and rougher as they climb. Spurs and gullies run down the slopes at odd
+// angles, with knolls, hollows and rocky crags on them, so flat ground gets rarer the
+// higher you go.
 function baseHeight(x: number, z: number) {
-  const d = streamDist(x, z);
+  const d0 = streamDist(x, z);
   const r = Math.hypot(x, z);
-  let rise = 20 * smoothstep(22, 160, d);
-  rise += 75 * smoothstep(120, 320, d) * (0.4 + fbm(x * 0.004, z * 0.004, 4));
-  rise += (fbm(x * 0.018 + 10, z * 0.018, 3) - 0.35) * 6 * smoothstep(25, 70, d);
-  const benches = terrace(Math.max(0, rise), 3.5);
-  rise += (benches - rise) * 0.8 * (1 - smoothstep(120, 200, d));
-  let h = floorHeight(z) + rise;
+  // Bend the contours so the slopes don't run neatly parallel to the stream.
+  const away = smoothstep(18, 90, d0);
+  const d = Math.max(0, d0 + (fbm(x * 0.006 + 31, z * 0.006 - 7, 3) - 0.5) * 70 * away);
+  const mountain = 0.2 * Math.max(0, d - 26) + 0.0008 * Math.max(0, d - 26) ** 2;
+  let rise = 5 * smoothstep(12, 55, d0) + mountain * (0.75 + 0.5 * fbm(x * 0.005 - 3, z * 0.005 + 11, 3));
+  // Spurs and gullies: sharp-crested ridged noise, stronger higher up.
+  const rn = 1 - Math.abs(2 * fbm(x * 0.011 + 5, z * 0.011 - 13, 4) - 1);
+  rise += (rn * rn - 0.45) * 16 * smoothstep(25, 160, d0);
+  // Knolls and hollows.
+  rise += (fbm(x * 0.03 - 9, z * 0.03 + 4, 3) - 0.5) * 7 * smoothstep(18, 90, d0);
+  // Rocky crags: short, steep lumps here and there.
+  const crag = Math.max(0, fbm(x * 0.045 + 21, z * 0.045 - 2, 3) - 0.6);
+  rise += crag * crag * 90 * smoothstep(35, 110, d0);
+  let h = floorHeight(z, d0) + Math.max(0, rise);
   h += 160 * smoothstep(320, 1000, r) * (0.5 + fbm(x * 0.002 + 7, z * 0.002, 3));
-  h += smoothstep(0, 9, d) * 0.9;
+  h += smoothstep(0, 9, d0) * 0.9;
   return h;
 }
 
@@ -91,7 +98,7 @@ function terrainNoBrooks(x: number, z: number) {
   let h = baseHeight(x, z);
   // Gentle unevenness underfoot, and the stream bed carved into the floor.
   h += (fbm(x * 0.04 + 3, z * 0.04, 2) - 0.5) * 0.8 * smoothstep(6, 20, d);
-  h += (fbm(x * 0.13, z * 0.13, 2) - 0.5) * 0.35 * smoothstep(3, 10, d);
+  h += (fbm(x * 0.13, z * 0.13, 2) - 0.5) * (0.35 + 1.1 * smoothstep(40, 150, d)) * smoothstep(3, 10, d);
   h -= 1.3 * Math.max(0, 1 - (d / 4.5) ** 2);
   // Clearings are levelled so a tent can go there.
   for (const c of clearings) {
@@ -167,69 +174,63 @@ function buildBrook(def: BrookDef): Brook {
     x += Math.cos(a);
     z += Math.sin(a);
   }
-  // Raw bed: the hillside minus a ravine that deepens away from the mouth.
+  // Raw bed: the hillside minus a shallow ravine that deepens a little away from the mouth.
   const raw = new Float32Array(n);
-  const mouth = waterLevel(def.z0) - 0.25;
+  const mouth = waterLevel(def.z0) - 0.1;
   for (let i = 0; i < n; i++) {
-    const depth = 0.7 + 2.4 * smoothstep(4, 40, i) + 1.2 * fbm(i * 0.05, def.seed, 2);
+    const depth = 0.5 + 1.5 * smoothstep(4, 40, i) + 1.0 * fbm(i * 0.05, def.seed, 2);
     raw[i] = i < 4 ? mouth : Math.max(mouth, terrainNoBrooks(xs[i], zs[i]) - depth);
   }
   // Water runs downhill: the bed never rises going downstream.
-  const bed = new Float32Array(n);
+  const smooth = new Float32Array(n);
   let low = Infinity;
   for (let i = n - 1; i >= 0; i--) {
     low = Math.min(low, raw[i]);
-    bed[i] = low;
+    smooth[i] = low;
   }
-  // Steep stretches become waterfalls: the drop gathers into one step, flat above and below.
+  // A mountain brook climbs in steps: shallow runs over gravel that rise gently, then
+  // a small fall over a rock step, usually well under two metres.
+  const rnd = mulberry32(def.seed * 7 + 1);
+  const bed = new Float32Array(n);
   const falls: BrookFall[] = [];
   const width = new Float32Array(n);
-  for (let i = 0; i < n; i++) width[i] = 0.9 + 0.7 * (1 - i / n) + 0.35 * fbm(i * 0.08, def.seed + 5, 2);
-  const water = new Float32Array(n);
-  let i = 1;
-  while (i < n - 1) {
-    if (bed[i + 1] - bed[i] < 0.12) {
-      i++;
-      continue;
+  for (let i = 0; i < n; i++) width[i] = 0.55 + 0.5 * (1 - i / n) + 0.3 * fbm(i * 0.08, def.seed + 5, 2);
+  let level = smooth[0];
+  let next = 0.6 + rnd() * 2.2;
+  const stepAt: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const excess = smooth[i] - level;
+    if (excess > next && i > 6) {
+      level = smooth[i];
+      bed[i] = level;
+      stepAt.push(i);
+      next = 0.6 + rnd() * 2.2;
+    } else {
+      bed[i] = level + excess * 0.35;
     }
-    let j = i;
-    while (j < n - 1 && bed[j + 1] - bed[j] >= 0.06) j++;
-    const rise = bed[j] - bed[i];
-    if (rise > 1.1 && i > 8) {
-      const m = Math.round((i + j) / 2);
-      for (let k = i; k <= j; k++) bed[k] = k <= m ? bed[i] : bed[j];
-      const dx = xs[m] - xs[m + 1];
-      const dz = zs[m] - zs[m + 1];
-      const l = Math.hypot(dx, dz) || 1;
-      falls.push({
-        x: (xs[m] + xs[m + 1]) / 2,
-        z: (zs[m] + zs[m + 1]) / 2,
-        top: bed[j] + 0.18,
-        bottom: bed[i] + 0.3,
-        dirX: dx / l,
-        dirZ: dz / l,
-        width: Math.min(width[m], 1.3) * (0.55 + 0.3 * fbm(m, def.seed, 1)),
-      });
-    }
-    i = j + 1;
   }
-  for (let k = 0; k < n; k++) water[k] = bed[k] + 0.2;
-  // Plunge pools: deeper, wider water just below each fall.
-  for (const f of falls) {
-    let m = 0;
-    let best = Infinity;
-    for (let k = 0; k < n; k++) {
-      const d = Math.hypot(xs[k] - f.x, zs[k] - f.z);
-      if (d < best) {
-        best = d;
-        m = k;
-      }
-    }
-    for (let k = Math.max(0, m - 6); k <= m; k++) {
-      const t = 1 - (m - k) / 6;
-      bed[k] -= 0.9 * Math.sin(t * Math.PI * 0.5 + 0.2);
-      water[k] = f.bottom;
-      width[k] *= 1 + 0.6 * Math.sin(t * Math.PI);
+  const water = new Float32Array(n);
+  for (let k = 0; k < n; k++) water[k] = bed[k] + 0.12;
+  for (const k of stepAt) {
+    const drop = water[k] - water[k - 1];
+    if (drop < 0.35) continue;
+    const dx = xs[k - 1] - xs[k];
+    const dz = zs[k - 1] - zs[k];
+    const l = Math.hypot(dx, dz) || 1;
+    falls.push({
+      x: (xs[k] + xs[k - 1]) / 2,
+      z: (zs[k] + zs[k - 1]) / 2,
+      top: water[k],
+      bottom: water[k - 1],
+      dirX: dx / l,
+      dirZ: dz / l,
+      width: width[k] * (0.45 + 0.35 * fbm(k, def.seed, 1)),
+    });
+    // A small plunge pool, only knee deep, just below the fall.
+    for (let j = Math.max(1, k - 4); j < k; j++) {
+      const t = (j - (k - 4)) / 4;
+      bed[j] -= 0.35 * Math.sin(Math.max(0, t) * Math.PI * 0.5 + 0.3) * Math.min(1, drop);
+      width[j] *= 1 + 0.4 * Math.sin(Math.max(0, t) * Math.PI);
     }
   }
   return { x: xs, z: zs, bed, water, width, falls };
@@ -268,8 +269,8 @@ function ensureRaster() {
       const vv = vx * vx + vz * vz || 1;
       // Banks are steepest beside falls, and vary along the way.
       let nearFall = 0;
-      for (const f of b.falls) nearFall = Math.max(nearFall, 1 - smoothstep(3, 12, Math.hypot(f.x - ax, f.z - az)));
-      const steep = 1.1 + 1.3 * fbm(k * 0.06, bi * 3.1, 2) + 2.2 * nearFall;
+      for (const f of b.falls) nearFall = Math.max(nearFall, (1 - smoothstep(2, 6, Math.hypot(f.x - ax, f.z - az))) * Math.min(1, (f.top - f.bottom) / 1.5));
+      const steep = 0.45 + 0.6 * fbm(k * 0.06, bi * 3.1, 2) + 0.6 * nearFall;
       const i0 = Math.max(0, Math.floor((Math.min(ax, bx) - R + HALF) / RES));
       const i1 = Math.min(RN - 1, Math.ceil((Math.max(ax, bx) + R + HALF) / RES));
       const j0 = Math.max(0, Math.floor((Math.min(az, bz) - R + HALF) / RES));
@@ -347,7 +348,7 @@ export function heightAt(x: number, z: number) {
   const steep = rasterSample(rSteep, x, z);
   // A rounded channel floor, then banks rising at the bank's steepness.
   const e = d - w;
-  const floor = e < 0 ? bed - 0.25 * (1 - (d / w) ** 2) : bed + e * steep + e * e * 0.04;
+  const floor = e < 0 ? bed - 0.1 * (1 - (d / w) ** 2) : bed + e * steep + e * e * 0.04;
   // Rough, rocky banks.
   const rough = (fbm(x * 0.35, z * 0.35, 2) - 0.5) * 0.6 * smoothstep(0, 2, e);
   return Math.min(h, floor + rough);

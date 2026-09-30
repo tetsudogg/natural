@@ -428,6 +428,25 @@ export function rockGeometry(seed: number, mossy: boolean) {
   return merged;
 }
 
+// A water-worn cobble: a low-poly, smooth, slightly flattened pebble.
+function cobbleGeometry() {
+  const g = new THREE.IcosahedronGeometry(1, 1);
+  const p = g.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i);
+    const y = p.getY(i);
+    const z = p.getZ(i);
+    const k = 0.85 + 0.25 * fbm(x * 1.3 + 4, y * 1.3 + z, 2);
+    p.setXYZ(i, x * k, Math.max(y * k, -0.3), z * k);
+  }
+  const merged = mergeVertices(g, 1e-3);
+  merged.computeVertexNormals();
+  const count = merged.attributes.position.count;
+  merged.setAttribute('moss', new THREE.BufferAttribute(new Float32Array(count), 1));
+  merged.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count * 3).fill(1), 3));
+  return merged;
+}
+
 // Wildflowers: two crossed cards showing one quarter of the flower atlas.
 function flowerGeometry(kind: FlowerKind) {
   const u0 = (kind % 4) * 0.25;
@@ -640,7 +659,8 @@ export function createVegetation() {
   const rocks: Placement[][] = [[], [], [], []];
   const addRock = (x: number, z: number, s: number, sink: number) => {
     const m = new THREE.Matrix4().compose(
-      new THREE.Vector3(x, groundHeight(x, z) - sink * s, z),
+      // On a slope the downhill side would hang in the air: bed the rock in deeper.
+      new THREE.Vector3(x, groundHeight(x, z) - sink * s - Math.min(1.2, groundSlope(x, z)) * s * 0.7, z),
       new THREE.Quaternion().setFromEuler(new THREE.Euler((rnd() - 0.5) * 0.4, rnd() * 6.28, (rnd() - 0.5) * 0.4)),
       new THREE.Vector3(s * (0.8 + rnd() * 0.6), s * (0.55 + rnd() * 0.4), s * (0.8 + rnd() * 0.6)),
     );
@@ -670,25 +690,46 @@ export function createVegetation() {
     if (waterDist(x, z) < 5 || clearingFactor(x, z) > 0.3) continue;
     addRock(x, z, 0.3 + rnd() * rnd() * 2.5, 0.4);
   }
-  // The brooks: mossy boulders in and beside the water, and rock stacked up the
-  // sides of every waterfall like the walls of a small gorge.
+  // The brooks: a bed of rounded cobbles and gravel, a few stones breaking the surface,
+  // big mossy boulders on the banks, and rocks framing the lip of every small fall.
+  const cobbles: Placement[] = [];
+  const cobbleTint = [srgb(0.95, 0.95, 0.93), srgb(0.78, 0.8, 0.82), srgb(1.05, 0.9, 0.72), srgb(0.95, 0.72, 0.55), srgb(0.6, 0.62, 0.62)];
+  const addCobble = (x: number, z: number, s: number) => {
+    const m = new THREE.Matrix4().compose(
+      new THREE.Vector3(x, groundHeight(x, z) - s * 0.25, z),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler((rnd() - 0.5) * 0.5, rnd() * 6.28, (rnd() - 0.5) * 0.5)),
+      new THREE.Vector3(s * (0.9 + rnd() * 0.6), s * (0.45 + rnd() * 0.3), s * (0.8 + rnd() * 0.4)),
+    );
+    cobbles.push({ m, c: cobbleTint[Math.floor(rnd() * cobbleTint.length)].clone().multiplyScalar(0.8 + rnd() * 0.35) });
+  };
   for (const b of brooks()) {
     const n = b.x.length;
-    for (let k = 3; k < n; k++) {
+    for (let k = 2; k < n; k++) {
       const tx = b.x[Math.min(n - 1, k + 1)] - b.x[k - 1];
       const tz = b.z[Math.min(n - 1, k + 1)] - b.z[k - 1];
       const l = Math.hypot(tx, tz) || 1;
       const nx = -tz / l;
       const nz = tx / l;
       const w = b.width[k];
-      if (rnd() < 0.45) {
+      // Gravel bars spill out over the banks in places.
+      const bar = 0.6 + 2.2 * Math.max(0, fbm(k * 0.09, b.x[0] * 0.1, 2) - 0.4);
+      for (let i = 0; i < 16; i++) {
+        const o = (rnd() - 0.5) * 2 * (w + bar);
+        const along = rnd() - 0.5;
+        addCobble(b.x[k] + nx * o + (tx / l) * along, b.z[k] + nz * o + (tz / l) * along, 0.05 + rnd() * rnd() * 0.22);
+      }
+      if (rnd() < 0.3) {
         const o = (rnd() - 0.5) * 2 * w;
-        addRock(b.x[k] + nx * o, b.z[k] + nz * o, 0.2 + rnd() * rnd() * 0.7, 0.35);
+        addRock(b.x[k] + nx * o, b.z[k] + nz * o, 0.18 + rnd() * rnd() * 0.45, 0.4);
       }
       for (const side of [-1, 1]) {
-        if (rnd() < 0.55) {
-          const o = side * (w + 0.2 + rnd() * rnd() * 3);
-          addRock(b.x[k] + nx * o, b.z[k] + nz * o, 0.35 + rnd() * rnd() * 1.5, 0.3);
+        if (rnd() < 0.4) {
+          const o = side * (w + 0.4 + rnd() * rnd() * 3);
+          const x = b.x[k] + nx * o;
+          const z = b.z[k] + nz * o;
+          // Big boulders only where the bank is not too steep to hold them.
+          const big = groundSlope(x, z) < 0.7 ? 1.6 : 0.5;
+          addRock(x, z, 0.35 + rnd() * rnd() * big, 0.3);
         }
       }
     }
@@ -696,19 +737,22 @@ export function createVegetation() {
       const H = f.top - f.bottom;
       const sx = -f.dirZ;
       const sz = f.dirX;
-      // Rock clings to the gorge walls on both sides, more of it the taller the fall.
+      const lx = f.x - f.dirX * 0.5;
+      const lz = f.z - f.dirZ * 0.5;
+      // Rocks on both sides of the lip squeeze the water into the fall.
       for (const side of [-1, 1]) {
-        for (let i = 0; i < 3 + H * 1.5; i++) {
-          const back = -2.5 + rnd() * 5;
-          const o = side * (f.width + 1.2 + rnd() * (1.5 + H * 0.35));
-          addRock(f.x + sx * o + f.dirX * back, f.z + sz * o + f.dirZ * back, 0.5 + rnd() * 0.8, 0.6);
+        for (let i = 0; i < 2; i++) {
+          const o = side * (f.width + 0.25 + rnd() * 0.5 + i * 0.6);
+          addRock(lx + sx * o - f.dirX * (0.2 + rnd() * 0.6), lz + sz * o - f.dirZ * (0.2 + rnd() * 0.6), 0.45 + rnd() * 0.35 + H * 0.12, 0.35);
         }
+        // and a block down the face of the step beside the water.
+        const o = side * (f.width + 0.4 + rnd() * 0.4);
+        addRock(f.x + sx * o, f.z + sz * o, 0.4 + H * 0.2, 0.4);
       }
-      // Boulders ringing the plunge pool.
-      for (let i = 0; i < 6; i++) {
-        const a = rnd() * Math.PI * 2;
-        const r = f.width + 1.2 + rnd() * 1.5;
-        addRock(f.x + f.dirX * 2.5 + Math.cos(a) * r, f.z + f.dirZ * 2.5 + Math.sin(a) * r, 0.5 + rnd() * 0.9, 0.35);
+      // A stone or two sitting in the pool below.
+      for (let i = 0; i < 2; i++) {
+        const o = (rnd() - 0.5) * 2 * f.width;
+        addRock(f.x + f.dirX * (1.5 + rnd() * 2) + sx * o, f.z + f.dirZ * (1.5 + rnd() * 2) + sz * o, 0.2 + rnd() * 0.3, 0.45);
       }
     }
   }
@@ -716,6 +760,10 @@ export function createVegetation() {
   photoRock(rockMat);
   const rockGroups = rocks.map((list, i) => chunked(rockGeometry(40 + (i % 2) * 7, i >= 2), rockMat, list, 60, { shadow: true, maxDist: 260 }));
   group.add(...rockGroups);
+  const cobbleMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7 });
+  photoRock(cobbleMat);
+  const cobbleGroup = chunked(cobbleGeometry(), cobbleMat, cobbles, 30, { maxDist: 55 });
+  group.add(cobbleGroup);
 
   // Wildflowers grow in drifts on open ground; each kind prefers its own patches.
   // Size, how many, and where differ by kind (silver grass is tall; clover is low and common).
@@ -773,5 +821,5 @@ export function createVegetation() {
   // Small plants are left out of the water reflection.
   for (const g of [grassGroup, bushGroup, fernGroup, ...flowerGroups]) g.traverse((o) => o.layers.set(NO_REFLECT_LAYER));
 
-  return { group, cullGroups: [grassGroup, bushGroup, fernGroup, ...rockGroups, ...flowerGroups], treeSpots };
+  return { group, cullGroups: [grassGroup, bushGroup, fernGroup, cobbleGroup, ...rockGroups, ...flowerGroups], treeSpots };
 }

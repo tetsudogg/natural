@@ -24,7 +24,7 @@ BASE = "https://dl.polyhaven.org/file/ph-assets"
 SURFACES = {
     "grass": "forrest_ground_01",  # meadow: short grass and soil
     "litter": "forest_leaves_03",  # forest floor covered in dry leaves
-    "gravel": "river_small_rocks",  # stream banks
+    "gravel": "ganges_river_pebbles",  # stream beds and banks: rounded, many-coloured cobbles
     "cliff": "aerial_rocks_02",  # steep ground: rock with moss between
     "moss": "moss_wood",  # thick green moss (the wood's cracks are removed below)
     "rock": "mossy_rock",  # boulders: grey stone with lichen
