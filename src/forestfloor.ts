@@ -1,5 +1,5 @@
-// The untidy life of a mountain forest floor: fallen logs, big dead branches, stumps,
-// roots snaking out from the trees, bamboo grass, butterbur, lilyturf, nettles and
+// The untidy life of a mountain forest floor: fallen logs, big dead branches, the odd
+// snag of a trunk snapped by lightning or storm, bamboo grass, butterbur, lilyturf, nettles and
 // mushrooms. Logs, branches, nettles and weeds are photo-scanned CC0 models from
 // Poly Haven (shrunk by scripts in the README); the rest is built here.
 
@@ -9,7 +9,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { HALF, brookEdgeDist, clearingFactor, forestDensity, waterDist } from './world';
 import { groundHeight, groundSlope } from './terrain';
 import { fbm, mulberry32 } from './noise';
-import { addWind, chunked, srgb, type Placement, type TreeSpot } from './vegetation';
+import { addWind, chunked, srgb, type Placement, type RockSpot, type TreeSpot } from './vegetation';
 import { surface } from './textures';
 import { NO_REFLECT_LAYER } from './water';
 import { fukiTexture, mushroomTexture, sasaTexture, MUSHROOM_CELLS } from './floortex';
@@ -43,83 +43,45 @@ function floorOk(x: number, z: number, maxSlope = 0.9) {
 
 // ---------- Procedural pieces ----------
 
-// Roots spreading from the foot of a trunk, arching out of the soil and diving back in.
-function rootsGeometry(seed: number) {
+// A snag: what is left standing when a tall trunk snaps in a storm or is split by
+// lightning. Two to four metres of trunk, the top torn into long splinters, highest on
+// one side, with a pale scar of bare wood running down where the bark was ripped off.
+const SNAG_H = 3;
+function snagGeometry(seed: number) {
   const rnd = mulberry32(seed);
-  const parts: THREE.BufferGeometry[] = [];
-  const count = 5 + Math.floor(rnd() * 3);
-  for (let i = 0; i < count; i++) {
-    const a = (i / count) * Math.PI * 2 + rnd() * 0.7;
-    const len = 0.9 + rnd() * 1.3;
-    const pts: THREE.Vector3[] = [];
-    const wig = rnd() * 6;
-    for (let k = 0; k <= 8; k++) {
-      const t = k / 8;
-      const r = 0.18 + t * len;
-      const side = Math.sin(t * 5 + wig) * 0.18 * t;
-      // High where it leaves the trunk, then humping in and out of the ground.
-      const y = 0.2 * (1 - t) ** 2 + 0.03 * Math.sin(t * 9 + wig) * t - 0.09 * t;
-      pts.push(new THREE.Vector3(Math.cos(a) * r - Math.sin(a) * side, y, Math.sin(a) * r + Math.cos(a) * side));
-    }
-    const curve = new THREE.CatmullRomCurve3(pts);
-    const tube = new THREE.TubeGeometry(curve, 16, 1, 6, false);
-    // Thick at the trunk, thin at the tip.
-    const p = tube.attributes.position as THREE.BufferAttribute;
-    const segs = 17;
-    const ring = 7;
-    for (let s = 0; s < segs; s++) {
-      const t = s / (segs - 1);
-      const c = curve.getPointAt(t);
-      const r = 0.11 * (1 - t) ** 1.8 + 0.012;
-      for (let j = 0; j < ring; j++) {
-        const idx = s * ring + j;
-        p.setXYZ(idx, c.x + (p.getX(idx) - c.x) * r, c.y + (p.getY(idx) - c.y) * r * 0.8, c.z + (p.getZ(idx) - c.z) * r);
-      }
-    }
-    tube.computeVertexNormals();
-    const uv = tube.attributes.uv as THREE.BufferAttribute;
-    for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getY(k) * 0.3, uv.getX(k) * len * 1.5);
-    parts.push(tube);
-  }
-  const g = mergeGeometries(parts)!;
-  const cols = new Float32Array(g.attributes.position.count * 3);
-  const pos = g.attributes.position as THREE.BufferAttribute;
-  for (let i = 0; i < pos.count; i++) {
-    // Earthy and darker where roots meet the soil, a little moss on top.
-    const y = pos.getY(i);
-    const k = 0.55 + 0.45 * THREE.MathUtils.smoothstep(y, -0.02, 0.2);
-    cols.set([k * 0.95, k * 0.9, k * 0.8], i * 3);
-  }
-  g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
-  return g;
-}
-
-// A broken-off stump: jagged, splintered top of pale wood, bark round the sides.
-function stumpGeometry(seed: number) {
-  const rnd = mulberry32(seed);
-  const g = new THREE.CylinderGeometry(0.3, 0.4, 0.7, 14, 4, false);
-  g.translate(0, 0.35, 0);
+  const g = new THREE.CylinderGeometry(0.22, 0.3, SNAG_H, 20, 14, false);
+  g.translate(0, SNAG_H / 2, 0);
   const p = g.attributes.position as THREE.BufferAttribute;
   const cols = new Float32Array(p.count * 3);
-  const phase = rnd() * 10;
+  const phase = rnd() * 6.28;
+  const scarA = phase + Math.PI * (0.6 + rnd() * 0.8);
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i);
     const z = p.getZ(i);
-    const y = p.getY(i);
+    let y = p.getY(i);
     const a = Math.atan2(z, x);
-    if (y > 0.69) {
-      // Splinters: the top is torn, high on one side.
-      const jag = 0.12 * fbm(a * 2.5 + phase, phase, 3) + 0.14 * Math.abs(Math.sin(a * 13 + phase * 2)) * fbm(a * 4, phase + 3, 2) + 0.22 * (0.5 + 0.5 * Math.cos(a - phase));
-      p.setY(i, y + jag - 0.2);
+    const top = y > SNAG_H - 0.01;
+    if (top) {
+      // Splinters: long spikes on the side that held on, ragged stubs elsewhere.
+      const high = Math.max(0, Math.cos(a - phase)) ** 2;
+      const spikes = Math.abs(Math.sin(a * 6 + phase * 3)) ** 4 * fbm(a * 3, phase, 2);
+      y += high * 0.9 + spikes * 0.7 + 0.15 * fbm(a * 5 + phase, 1, 2) - 0.6;
+      if (x * x + z * z < 0.01) y -= 0.3; // the cap's centre sits down inside the break
     }
-    // A slight flare at the foot and uneven sides.
-    const flare = 1 + 0.25 * (1 - THREE.MathUtils.smoothstep(y, 0, 0.3)) + 0.06 * Math.sin(a * 5 + phase);
-    p.setX(i, x * flare);
-    p.setZ(i, z * flare);
-    const top = y > 0.69 ? 1 : 0;
-    const moss = (1 - THREE.MathUtils.smoothstep(y, 0.05, 0.35)) * (0.5 + 0.5 * Math.cos(a - phase * 0.7));
-    const c = top ? [0.8, 0.62, 0.42] : [0.46 - moss * 0.25, 0.4 - moss * 0.05, 0.33 - moss * 0.22];
-    cols.set(c, i * 3);
+    // Uneven, slightly bent trunk with a flared foot.
+    const bend = 0.08 * Math.sin((y / SNAG_H) * 2.5 + phase);
+    const flare = 1 + 0.35 * (1 - THREE.MathUtils.smoothstep(y, 0, 0.5)) + 0.07 * Math.sin(a * 5 + phase) + (top ? -0.25 : 0);
+    p.setXYZ(i, x * flare + bend, y, z * flare);
+    // Colours: grey weathered wood at the break and down the scar, bark elsewhere,
+    // moss at the foot on one side.
+    let da = Math.abs(((a - scarA + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+    da += (0.3 - 0.3 * (y / SNAG_H)) * (0.6 + 0.4 * Math.sin(y * 2 + phase));
+    const scar = 1 - THREE.MathUtils.smoothstep(da, 0.25, 0.45);
+    const moss = (1 - THREE.MathUtils.smoothstep(y, 0.05, 0.9)) * (0.5 + 0.5 * Math.cos(a - phase * 0.7));
+    const bark = [0.46 - moss * 0.25, 0.4 - moss * 0.05, 0.33 - moss * 0.22];
+    const wood = [0.78, 0.72, 0.64];
+    const k = top ? 1 : scar;
+    cols.set([0, 1, 2].map((j) => bark[j] + (wood[j] - bark[j]) * k), i * 3);
   }
   g.computeVertexNormals();
   g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
@@ -137,8 +99,9 @@ function sasaGeometry(seed: number) {
     const h = 0.55 + rnd() * 0.6;
     const lean = new THREE.Vector3((rnd() - 0.5) * 0.25, 1, (rnd() - 0.5) * 0.25).normalize();
     const top = new THREE.Vector3(bx, 0, bz).addScaledVector(lean, h);
-    const stem = new THREE.CylinderGeometry(0.004, 0.006, h, 3);
-    stem.translate(0, h / 2, 0);
+    // The culm starts well below the soil so it still reaches the ground on a slope.
+    const stem = new THREE.CylinderGeometry(0.004, 0.006, h + 0.6, 3);
+    stem.translate(0, (h + 0.6) / 2 - 0.6, 0);
     stem.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(UP, lean));
     stem.translate(bx, 0, bz);
     setUv(stem, 0.5, 0.02);
@@ -383,7 +346,7 @@ const DEMO = (() => {
   };
 })();
 
-export function createForestFloor(trees: TreeSpot[]) {
+export function createForestFloor(trees: TreeSpot[], rocks: RockSpot[]) {
   const rnd = mulberry32(777);
   const one = new THREE.Vector3(1, 1, 1);
   const group = new THREE.Group();
@@ -401,38 +364,46 @@ export function createForestFloor(trees: TreeSpot[]) {
   const barkMap = bark.map;
   const barkNormal = bark.normal;
 
-  // Roots at the foot of many trees, more of them on slopes where soil washes away.
-  const roots: Placement[][] = [[], []];
-  for (const t of trees) {
-    const slope = groundSlope(t.x, t.z);
-    if (rnd() > 0.35 + slope * 0.8) continue;
-    const s = (t.s ?? 1) * (0.9 + rnd() * 0.3);
-    roots[Math.floor(rnd() * 2)].push({ m: onGround(t.x, t.z, rnd() * 6.28, new THREE.Vector3(s, s, s), 0.85, 0.04), c: t.cedar ? srgb(0.75, 0.55, 0.45) : tint(0.75, 1) });
+  // Rocks in a coarse grid, so nothing is set down on top of one.
+  const CELL = 8;
+  const rockGrid = new Map<number, RockSpot[]>();
+  const cellKey = (i: number, j: number) => i * 10000 + j;
+  for (const r of rocks) {
+    const k = cellKey(Math.floor(r.x / CELL), Math.floor(r.z / CELL));
+    if (!rockGrid.has(k)) rockGrid.set(k, []);
+    rockGrid.get(k)!.push(r);
   }
-  if (DEMO) {
-    const [x, z] = DEMO(0);
-    roots[0].push({ m: onGround(x, z, 0, one, 0.85, 0.04), c: white });
-  }
-  const rootMat = new THREE.MeshStandardMaterial({ map: barkMap, normalMap: barkNormal, vertexColors: true, roughness: 0.95 });
-  roots.forEach((list, i) => add(chunked(rootsGeometry(300 + i), rootMat, list, 50, { shadow: true, maxDist: 110 })));
+  const onRock = (x: number, z: number, pad: number) => {
+    const i0 = Math.floor(x / CELL);
+    const j0 = Math.floor(z / CELL);
+    for (let i = i0 - 1; i <= i0 + 1; i++)
+      for (let j = j0 - 1; j <= j0 + 1; j++)
+        for (const r of rockGrid.get(cellKey(i, j)) ?? []) if (Math.hypot(r.x - x, r.z - z) < r.r + pad) return true;
+    return false;
+  };
 
-  // Stumps of trees that broke long ago, some with shelf fungi.
-  const stumps: Placement[] = [];
+  // A few snags of trunks broken by storms or lightning, far apart. Their broken-off
+  // tops lie beside them (added with the logs below); some carry shelf fungi.
+  const snags: Placement[][] = [[], []];
   const shelves: Placement[] = [];
   const logSpots: { x: number; z: number }[] = [];
-  for (let i = 0; i < 9000 && stumps.length < 260; i++) {
-    const x = (rnd() * 2 - 1) * (HALF - 8);
-    const z = (rnd() * 2 - 1) * (HALF - 8);
-    if (forestDensity(x, z) < 0.35 || !floorOk(x, z)) continue;
-    const s = 0.6 + rnd() * 0.8;
-    const yaw = rnd() * 6.28;
-    stumps.push({ m: onGround(x, z, yaw, new THREE.Vector3(s, s * (0.6 + rnd() * 0.9), s), 0.3, 0.05), c: tint(0.7, 1) });
+  const snagSpots: { x: number; z: number; s: number }[] = [];
+  for (let i = 0; i < 20000 && snagSpots.length < 36; i++) {
+    const x = (rnd() * 2 - 1) * (HALF - 12);
+    const z = (rnd() * 2 - 1) * (HALF - 12);
+    if (forestDensity(x, z) < 0.45 || !floorOk(x, z, 0.8) || onRock(x, z, 1)) continue;
+    if (snagSpots.some((p) => Math.hypot(p.x - x, p.z - z) < 30)) continue;
+    const s = 0.7 + rnd() * 0.7;
+    const r = 0.8 + rnd() * 0.5;
+    snags[Math.floor(rnd() * 2)].push({ m: onGround(x, z, rnd() * 6.28, new THREE.Vector3(r * s, s, r * s), 0.15, 0.1), c: tint(0.75, 1) });
+    snagSpots.push({ x, z, s: s * r });
     logSpots.push({ x, z });
-    if (rnd() < 0.5) {
+    const fungi = rnd() < 0.5 ? 1 + Math.floor(rnd() * 3) : 0;
+    for (let k = 0; k < fungi; k++) {
       const a = rnd() * 6.28;
-      const r = 0.38 * s;
+      const rr = 0.33 * s * r;
       const m = new THREE.Matrix4().compose(
-        new THREE.Vector3(x + Math.cos(a) * r, groundHeight(x, z) + 0.12 + rnd() * 0.25 * s, z + Math.sin(a) * r),
+        new THREE.Vector3(x + Math.cos(a) * rr, groundHeight(x, z) + 0.25 + rnd() * 1.2 * s, z + Math.sin(a) * rr),
         new THREE.Quaternion().setFromAxisAngle(UP, -a),
         new THREE.Vector3(1, 1, 1).multiplyScalar(0.8 + rnd() * 0.8),
       );
@@ -440,12 +411,12 @@ export function createForestFloor(trees: TreeSpot[]) {
     }
   }
   if (DEMO) {
-    const [x, z] = DEMO(1);
-    stumps.push({ m: onGround(x, z, 0, one, 0.3, 0.05), c: white });
-    shelves.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x + 0.38, groundHeight(x, z) + 0.3, z), new THREE.Quaternion(), one), c: white });
+    const [x, z] = DEMO(0);
+    snags[0].push({ m: onGround(x, z, 0, new THREE.Vector3(0.9, 0.8, 0.9), 0.15, 0.1), c: white });
+    snagSpots.push({ x, z, s: 0.8 });
   }
-  const stumpMat = new THREE.MeshStandardMaterial({ map: barkMap, normalMap: barkNormal, vertexColors: true, roughness: 0.95 });
-  add(chunked(stumpGeometry(41), stumpMat, stumps, 60, { shadow: true, maxDist: 160 }));
+  const snagMat = new THREE.MeshStandardMaterial({ map: barkMap, normalMap: barkNormal, vertexColors: true, roughness: 0.95 });
+  snags.forEach((list, i) => add(chunked(snagGeometry(41 + i * 13), snagMat, list, 20, { shadow: true, maxDist: 220 })));
 
   // Shelf fungi on some tree trunks too.
   for (const t of trees) {
@@ -478,7 +449,8 @@ export function createForestFloor(trees: TreeSpot[]) {
     if (pick < 0.55) {
       if (rnd() > colony * (0.25 + dens * 0.75)) continue;
       const s = 0.8 + rnd() * 0.6;
-      sasa[Math.floor(rnd() * 2)].push({ m: onGround(x, z, rnd() * 6.28, new THREE.Vector3(s, s * (0.8 + rnd() * 0.5), s), 0.3, 0.02), c: tint(0.8, 1.1) });
+      // Sink the clump by how much the slope drops across it, so no culm hangs in the air.
+      sasa[Math.floor(rnd() * 2)].push({ m: onGround(x, z, rnd() * 6.28, new THREE.Vector3(s, s * (0.9 + rnd() * 0.5), s), 0.3, 0.03 + slope * 0.3 * s), c: tint(0.8, 1.1) });
     } else if (pick < 0.7) {
       // Butterbur likes damp ground beside water.
       const brook = brookEdgeDist(x, z);
@@ -513,7 +485,7 @@ export function createForestFloor(trees: TreeSpot[]) {
   addWind(turfMat, { amount: 0.04, height: 0.45, foliage: true, flutter: true });
   turf.forEach((list, i) => add(chunked(lilyturfGeometry(80 + i), turfMat, list, 30, { maxDist: 50 })));
 
-  // Mushrooms: at the feet of trees, beside stumps and logs, a few out on their own.
+  // Mushrooms: at the feet of trees, beside snags and logs, a few out on their own.
   const kinds = mushroomKinds();
   const shrooms: Record<keyof typeof kinds, Placement[]> = { agaric: [], brown: [], nameko: [], white: [], shelf: shelves };
   const near = (x: number, z: number, r0: number, r1: number) => {
@@ -567,6 +539,29 @@ export function createForestFloor(trees: TreeSpot[]) {
     // Fallen logs lie along the ground, following the slope end to end.
     const logs: Placement[][] = [[], []];
     const laid: { x: number; z: number }[] = [];
+    // The broken-off top of each snag lies near its foot, mostly thrown downhill.
+    const n = new THREE.Vector3();
+    for (const sp of snagSpots) {
+      groundNormal(sp.x, sp.z, n);
+      const down = Math.atan2(-n.z, n.x);
+      for (let tries = 0; tries < 8; tries++) {
+        const yaw = down + (r2() - 0.5) * 1.6;
+        const len = 4.05 * (0.9 + r2() * 0.5);
+        const gap = 0.6 + r2() * 1.2 + len * 0.5;
+        const x = sp.x + Math.cos(yaw) * gap;
+        const z = sp.z - Math.sin(yaw) * gap;
+        const dx = Math.cos(yaw) * len * 0.5;
+        const dz = -Math.sin(yaw) * len * 0.5;
+        const h1 = groundHeight(x - dx, z - dz);
+        const h2 = groundHeight(x + dx, z + dz);
+        if (Math.abs(groundHeight(x, z) - (h1 + h2) / 2) > 0.3 || onRock(x, z, 0.4) || onRock(x + dx, z + dz, 0.4)) continue;
+        const r = 0.75 * sp.s;
+        const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, Math.atan2(h2 - h1, len), 'YZX')).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), r2() * 6.28));
+        logs[0].push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x, (h1 + h2) / 2 - 0.1 * r, z), q, new THREE.Vector3(len / 4.05, r, r)), c: t2(0.8, 1.05) });
+        laid.push({ x, z });
+        break;
+      }
+    }
     for (let i = 0; i < 20000 && laid.length < 520; i++) {
       const x = (r2() * 2 - 1) * (HALF - 10);
       const z = (r2() * 2 - 1) * (HALF - 10);
@@ -581,6 +576,7 @@ export function createForestFloor(trees: TreeSpot[]) {
       const hm = groundHeight(x, z);
       // Skip spots where the log would bridge a dip or bury itself in a hump.
       if (Math.abs(hm - (h1 + h2) / 2) > 0.25 || !floorOk(x - dx, z - dz, 1.2) || !floorOk(x + dx, z + dz, 1.2)) continue;
+      if (onRock(x, z, 0.3) || onRock(x - dx, z - dz, 0.3) || onRock(x + dx, z + dz, 0.3)) continue;
       const pitch = Math.atan2(h2 - h1, len);
       const sx = len / (big ? 4.05 : 3.05);
       const r = big ? 0.55 + r2() * 0.45 : 1 + r2() * 0.9;

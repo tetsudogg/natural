@@ -551,6 +551,13 @@ function place(x: number, z: number, scale: number, yaw: number, sink = 0) {
   return m;
 }
 
+// Where a rock lies, and roughly how far it reaches.
+export interface RockSpot {
+  x: number;
+  z: number;
+  r: number;
+}
+
 export interface TreeSpot {
   x: number;
   z: number;
@@ -661,7 +668,9 @@ export function createVegetation() {
 
   // Rocks: pebbles in the stream, boulders on the banks and by the waterfall.
   const rocks: Placement[][] = [[], [], [], []];
+  const rockSpots: RockSpot[] = [];
   const addRock = (x: number, z: number, s: number, sink: number) => {
+    rockSpots.push({ x, z, r: s * 1.3 });
     const m = new THREE.Matrix4().compose(
       // On a slope the downhill side would hang in the air: bed the rock in deeper.
       new THREE.Vector3(x, groundHeight(x, z) - sink * s - Math.min(1.2, groundSlope(x, z)) * s * 0.7, z),
@@ -825,5 +834,5 @@ export function createVegetation() {
   // Small plants are left out of the water reflection.
   for (const g of [grassGroup, bushGroup, fernGroup, ...flowerGroups]) g.traverse((o) => o.layers.set(NO_REFLECT_LAYER));
 
-  return { group, cullGroups: [grassGroup, bushGroup, fernGroup, cobbleGroup, ...rockGroups, ...flowerGroups], treeSpots };
+  return { group, cullGroups: [grassGroup, bushGroup, fernGroup, cobbleGroup, ...rockGroups, ...flowerGroups], treeSpots, rockSpots };
 }

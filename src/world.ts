@@ -195,8 +195,10 @@ function buildBrook(def: BrookDef): Brook {
     low = Math.min(low, raw[i]);
     smooth[i] = low;
   }
-  // A mountain brook climbs in steps: shallow runs over gravel that rise gently, then
-  // a small fall over a rock step, usually well under two metres.
+  // A mountain brook climbs untidily: long reaches of steep riffle and cascade over
+  // cobbles where the bed hugs the hillside, flatter gravel runs, and now and then a
+  // rock step the water drops over. Steps come at uneven spacing, mostly small, a few
+  // bigger, and some drops are spread over a short chute instead of a clean fall.
   const rnd = mulberry32(def.seed * 7 + 1);
   const bed = new Float32Array(n);
   const falls: BrookFall[] = [];
@@ -204,26 +206,44 @@ function buildBrook(def: BrookDef): Brook {
   for (let i = 0; i < n; i++) width[i] = (0.55 + 0.5 * (1 - i / n) + 0.3 * fbm(i * 0.08, def.seed + 5, 2)) * size;
   let level = smooth[0];
   const stepMax = 0.5 + 0.5 * size;
-  let next = (0.6 + rnd() * 2.2) * stepMax;
+  const nextStep = () => stepMax * (0.45 + 2.6 * rnd() ** 2) * (rnd() < 0.12 ? 1.7 : 1);
+  let next = nextStep();
   const stepAt: number[] = [];
   for (let i = 0; i < n; i++) {
     const excess = smooth[i] - level;
+    // How closely the bed follows the hillside: riffles hug it, runs lag behind it.
+    const follow = 0.15 + 0.8 * smoothstep(0.35, 0.65, fbm(i * 0.045, def.seed + 11, 2));
     if (excess > next && i > 6) {
+      const drop = smooth[i] - bed[i - 1];
       level = smooth[i];
       bed[i] = level;
-      stepAt.push(i);
-      next = (0.6 + rnd() * 2.2) * stepMax;
+      // Tall drops and drops right after another fall tumble down as cascades.
+      const lastStep = stepAt.length ? stepAt[stepAt.length - 1] : -99;
+      if (rnd() < 0.4 || drop > 2.4 || i - lastStep < 3) {
+        // A steep chute over a few metres: raise the bed below so no single sample
+        // drops much. Whatever the chute cannot take drops as a fall at its foot.
+        let j = i - 1;
+        const end = i - 2 - Math.floor(rnd() * 5);
+        // (and keep going while the fall left over would be taller than a couple of metres)
+        for (; j > 6 && (j >= end || bed[j] < bed[j + 1] - 2) && bed[j] < bed[j + 1] - 0.32; j--) bed[j] = bed[j + 1] - 0.32;
+        if (bed[j + 1] - bed[j] > 0.35) stepAt.push(j + 1);
+      } else stepAt.push(i);
+      next = nextStep();
     } else {
-      bed[i] = level + excess * 0.35;
+      bed[i] = Math.max(i ? bed[i - 1] : -Infinity, level + excess * follow);
     }
   }
   const water = new Float32Array(n);
   for (let k = 0; k < n; k++) water[k] = bed[k] + 0.12;
-  for (const k of stepAt) {
+  for (const k of new Set(stepAt)) {
     const drop = water[k] - water[k - 1];
     if (drop < 0.35) continue;
-    const dx = xs[k - 1] - xs[k];
-    const dz = zs[k - 1] - zs[k];
+    // The lip is a rock ledge, rarely square across the channel.
+    const skew = (rnd() - 0.5) * 0.8;
+    const cx = xs[k - 1] - xs[k];
+    const cz = zs[k - 1] - zs[k];
+    const dx = cx * Math.cos(skew) - cz * Math.sin(skew);
+    const dz = cx * Math.sin(skew) + cz * Math.cos(skew);
     const l = Math.hypot(dx, dz) || 1;
     falls.push({
       x: (xs[k] + xs[k - 1]) / 2,
@@ -232,7 +252,7 @@ function buildBrook(def: BrookDef): Brook {
       bottom: water[k - 1],
       dirX: dx / l,
       dirZ: dz / l,
-      width: width[k] * (0.45 + 0.35 * fbm(k, def.seed, 1)),
+      width: width[k] * (0.35 + 0.5 * rnd()),
     });
     // A small plunge pool, only knee deep, just below the fall.
     for (let j = Math.max(1, k - 4); j < k; j++) {

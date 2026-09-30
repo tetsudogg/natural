@@ -91,7 +91,7 @@ async function main() {
   scene.add(createTerrain());
   const veg = createVegetation();
   scene.add(veg.group);
-  const floor = createForestFloor(veg.treeSpots);
+  const floor = createForestFloor(veg.treeSpots, veg.rockSpots);
   scene.add(floor.group);
   const stream = createStream();
   scene.add(stream.mesh);
