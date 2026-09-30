@@ -11,6 +11,7 @@ import { createTent, type TentSave } from './tent';
 import { createSky } from './sky';
 import { Player, type ViewMode } from './player';
 import { Soundscape } from './audio';
+import { isTouchDevice, setupTouch } from './touch';
 import { clearings } from './world';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -109,7 +110,9 @@ async function main() {
   const post = createPost(renderer);
   // ?quality=low|medium|high overrides the saved choice (handy for testing).
   const qParam = new URLSearchParams(location.search).get('quality') as Quality | null;
-  let quality: Quality = qParam && QUALITIES.includes(qParam) ? qParam : (saved?.quality ?? 'high');
+  const touchDevice = isTouchDevice();
+  // Phones start a step lower; the automatic check lowers it further if needed.
+  let quality: Quality = qParam && QUALITIES.includes(qParam) ? qParam : (saved?.quality ?? (touchDevice ? 'medium' : 'high'));
   function applyQuality() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY_PIXEL_RATIO[quality]));
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -174,6 +177,7 @@ async function main() {
   const pause = $('pause');
 
   function lock() {
+    if (touchDevice) return;
     const p = canvas.requestPointerLock() as unknown as Promise<void> | undefined;
     p?.catch?.(() => {});
   }
@@ -187,6 +191,7 @@ async function main() {
   function start() {
     if (started) return;
     started = true;
+    document.body.classList.add('playing');
     sound.start();
     $('title').classList.add('fade');
     setTimeout(() => ($('title').hidden = true), 1300);
@@ -280,17 +285,9 @@ async function main() {
     }, 3200);
   }
 
-  window.addEventListener('keydown', (e) => {
-    if (!started) {
-      if (e.code === 'Enter' || e.code === 'Space') start();
-      return;
-    }
-    if (e.repeat) return;
-    if (tent.inside && !viewing && ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
-      leaveTent();
-      return;
-    }
-    switch (e.code) {
+  // Game actions, shared by the keyboard and the touch buttons. Returns true when handled.
+  function press(code: string) {
+    switch (code) {
       case 'KeyV':
         viewing ? exitView() : enterView();
         return;
@@ -351,9 +348,40 @@ async function main() {
         slowTime = 0;
         toast(QUALITY_LABEL[quality]);
         return;
+      default:
+        return false;
     }
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (!started) {
+      if (e.code === 'Enter' || e.code === 'Space') start();
+      return;
+    }
+    if (e.repeat) return;
+    if (tent.inside && !viewing && ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+      leaveTent();
+      return;
+    }
+    if (press(e.code) !== false) return;
     if (!viewing) player.keyDown(e.code);
   });
+
+  const touch = touchDevice
+    ? setupTouch(canvas, {
+        active: () => started && !viewing && !sleeping,
+        move: (x, y) => {
+          if (tent.inside && Math.hypot(x, y) > 0.5) leaveTent();
+          player.stick.x = x;
+          player.stick.y = y;
+        },
+        look: (dx, dy) => (tent.inside ? tent.look(dx, dy) : player.look(dx, dy)),
+        press,
+      })
+    : null;
+  // On touch screens the hints name the on-screen controls instead of keys.
+  const hintText = (h: string) =>
+    touch ? h.replace('W：外に出る', 'スティック：外に出る').replace(/Esc：/g, '✕：') : h;
   window.addEventListener('keyup', (e) => player.keyUp(e.code));
   window.addEventListener('blur', () => player.releaseKeys());
 
@@ -405,7 +433,7 @@ async function main() {
     windUniforms.uTime.value = elapsed;
     windUniforms.uWind.value = 0.5 + 0.35 * Math.sin(elapsed * 0.13) * Math.sin(elapsed * 0.071);
 
-    player.update(dt, started && !viewing && !tent.inside && document.pointerLockElement === canvas);
+    player.update(dt, started && !viewing && !tent.inside && (document.pointerLockElement === canvas || !!touch));
     if (viewing) {
       viewClock += dt;
       if (motion === 'pan') player.yaw = viewBaseYaw + Math.sin(viewClock * ((Math.PI * 2) / 140)) * 0.5;
@@ -428,7 +456,8 @@ async function main() {
     sound.fire(campfire.firePosition, campfire.power);
     if (++hintTick % 10 === 0) {
       const h = viewing ? null : (tent.hint(player.position) ?? campfire.hint(player.position));
-      hintEl.textContent = h ?? '';
+      hintEl.textContent = h ? hintText(h) : '';
+      touch?.setCancel(tent.placing);
       hintEl.classList.toggle('show', !!h);
       packEl.textContent = campfire.pack > 0 ? `枝 ${campfire.pack} 本` : '';
     }

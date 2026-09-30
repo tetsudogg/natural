@@ -2,7 +2,7 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Natural</title>
     <link rel="stylesheet" href="./src/style.css" />
   </head>
@@ -21,6 +21,7 @@
           <li><kbd>T</kbd> 時間の速さ　<kbd>Q</kbd> 画質　<kbd>H</kbd> 操作の表示</li>
           <li><kbd>E</kbd> 枝を拾う／くべる　<kbd>B</kbd> 焚き火を組む（枝 5 本）　<kbd>P</kbd> テントを張る</li>
         </ul>
+        <p class="touch-keys">画面の左側をなぞって歩く（大きく倒すと走る）<br />右側をなぞって見回す<br />右下のボタンで 拾う・焚き火・テント など</p>
         <p class="note">音が出ます。ヘッドホンがおすすめです。</p>
       </div>
     </div>
@@ -36,6 +37,20 @@
         <kbd>WASD</kbd> 歩く　<kbd>Shift</kbd> 走る　<kbd>C</kbd> 視点　<kbd>V</kbd> 眺めモード　<kbd>F</kbd> 全画面　<kbd>E</kbd> 拾う　<kbd>B</kbd> 焚き火　<kbd>P</kbd> テント　<kbd>T</kbd> 時間　<kbd>Q</kbd> 画質　<kbd>H</kbd> 操作を隠す
       </div>
       <button id="view-btn" type="button" title="眺めモード (V)">眺める</button>
+    </div>
+
+    <div id="touch">
+      <div id="stick"><div id="knob"></div></div>
+      <div id="touch-buttons">
+        <button type="button" id="touch-cancel" data-key="Escape" hidden><b>✕</b>やめる</button>
+        <button type="button" data-key="KeyF"><b>F</b>全画面</button>
+        <button type="button" data-key="KeyQ"><b>Q</b>画質</button>
+        <button type="button" data-key="KeyT"><b>T</b>時間</button>
+        <button type="button" data-key="KeyC"><b>C</b>視点</button>
+        <button type="button" data-key="KeyP"><b>P</b>テント</button>
+        <button type="button" data-key="KeyB"><b>B</b>焚き火</button>
+        <button type="button" data-key="KeyE"><b>E</b>拾う</button>
+      </div>
     </div>
 
     <div id="toast" aria-live="polite"></div>

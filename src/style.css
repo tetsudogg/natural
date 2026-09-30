@@ -24,6 +24,7 @@ body {
 }
 
 canvas#scene {
+  touch-action: none;
   position: fixed;
   inset: 0;
   width: 100%;
@@ -248,6 +249,121 @@ body.viewing {
 
 body.viewing.pointer {
   cursor: default;
+}
+
+/* Touch controls: only on touch screens, only while walking around. */
+#touch,
+.touch-keys {
+  display: none;
+}
+
+body.touch .touch-keys {
+  display: block;
+  font-size: 13px;
+  line-height: 1.9;
+  color: var(--ink-soft);
+  margin-top: 24px;
+}
+
+body.touch .keys,
+body.touch .help {
+  display: none;
+}
+
+body.touch.playing #touch {
+  display: block;
+}
+
+body.viewing #touch {
+  display: none !important;
+}
+
+#stick {
+  position: fixed;
+  width: 112px;
+  height: 112px;
+  margin: -56px 0 0 -56px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(10, 14, 10, 0.16);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 6;
+}
+
+#stick.show {
+  opacity: 1;
+}
+
+#knob {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+}
+
+#touch-buttons {
+  position: fixed;
+  right: calc(12px + env(safe-area-inset-right));
+  bottom: calc(64px + env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: repeat(2, 52px);
+  gap: 10px;
+  direction: rtl;
+  z-index: 6;
+}
+
+#touch-buttons button {
+  direction: ltr;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(10, 14, 10, 0.26);
+  color: rgba(255, 255, 255, 0.82);
+  font: inherit;
+  font-size: 9px;
+  line-height: 1.1;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#touch-buttons button b {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+#touch-buttons button:active {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+#touch-buttons #touch-cancel {
+  grid-column: 1 / -1;
+  width: 114px;
+  border-radius: 26px;
+  flex-direction: row;
+  gap: 6px;
+  font-size: 12px;
+}
+
+body.touch #view-btn {
+  margin-bottom: env(safe-area-inset-bottom);
+}
+
+body.touch {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -17,6 +17,8 @@ export class Player {
   view: ViewMode = 'first';
   readonly body: THREE.Group;
   private keys = new Set<string>();
+  // Touch thumb stick: x right, y forward, each -1..1. Pushed to the edge, you run.
+  readonly stick = { x: 0, y: 0 };
   private velocity = new THREE.Vector3();
   private stepPhase = 0;
   private bob = 0;
@@ -40,6 +42,8 @@ export class Player {
   }
   releaseKeys() {
     this.keys.clear();
+    this.stick.x = 0;
+    this.stick.y = 0;
   }
 
   look(dx: number, dy: number) {
@@ -56,12 +60,20 @@ export class Player {
     const k = this.keys;
     const fwd = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0);
     const side = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
-    const running = k.has('ShiftLeft') || k.has('ShiftRight');
+    let running = k.has('ShiftLeft') || k.has('ShiftRight');
     const want = new THREE.Vector3();
+    const sin = Math.sin(this.yaw);
+    const cos = Math.cos(this.yaw);
+    const push = Math.hypot(this.stick.x, this.stick.y);
     if (canMove && (fwd || side)) {
-      const sin = Math.sin(this.yaw);
-      const cos = Math.cos(this.yaw);
       want.set(-sin * fwd + cos * side, 0, -cos * fwd - sin * side).normalize().multiplyScalar(running ? RUN : WALK);
+    } else if (canMove && push > 0.15) {
+      // A light push walks slowly; near the edge of the stick you break into a run.
+      running = push > 0.92;
+      const f = this.stick.y / push;
+      const s = this.stick.x / push;
+      const pace = running ? RUN : WALK * THREE.MathUtils.clamp((push - 0.15) / 0.55, 0.35, 1);
+      want.set(-sin * f + cos * s, 0, -cos * f - sin * s).multiplyScalar(pace);
     }
     this.velocity.lerp(want, Math.min(1, dt * 6));
     const speed = this.velocity.length();
