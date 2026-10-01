@@ -97,7 +97,8 @@ const fragmentShader = /* glsl */ `
 export function createStream() {
   const halfWidth = 6;
   const across = 6;
-  const rows = Math.round(HALF * 2);
+  // The stream runs into the pond at its north end, so it stops at the shore.
+  const rows = Math.round(HALF + 236);
   const verts: number[] = [];
   const uvs: number[] = [];
   const idx: number[] = [];
@@ -157,7 +158,36 @@ export function createStream() {
   const mesh = new THREE.Mesh(geo, mat);
   mesh.renderOrder = 1;
 
-  // Mirror camera for a flat water plane at the stream's level nearest the viewer.
+  const mirror = createMirror(target, textureMatrix);
+
+  function renderReflection(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
+    const camPos = mirror.camPos.setFromMatrixPosition(camera.matrixWorld);
+    // Too far from the stream to see it: skip the extra render.
+    if (Math.abs(camPos.x - streamX(camPos.z)) > 140) {
+      mat.uniforms.uReflect.value = 0;
+      return;
+    }
+    mat.uniforms.uReflect.value = 1;
+    mirror.render(renderer, scene, camera, waterLevel(camPos.z), mesh);
+  }
+
+  return {
+    mesh,
+    renderReflection,
+    update(time: number, sunDir: THREE.Vector3, sunColor: THREE.Color, sunStrength: number, daylight: number) {
+      mat.uniforms.uTime.value = time;
+      mat.uniforms.uSunDir.value.copy(sunDir);
+      mat.uniforms.uSunColor.value.copy(sunColor).multiplyScalar(sunStrength);
+      mat.uniforms.uLight.value = 0.08 + 0.92 * daylight;
+    },
+  };
+}
+
+// A planar mirror for flat water: renders the scene as seen from below the water plane
+// into `target`, and keeps `textureMatrix` up to date for projecting it onto the water.
+// clipBias lifts the clip plane in proportion to distance: it hides seams along close banks,
+// but on wide water it would cut the far shore off the reflection, so the pond uses less.
+export function createMirror(target: THREE.WebGLRenderTarget, textureMatrix: THREE.Matrix4, scale = 0.5, clipBias = 0.003) {
   const mirror = new THREE.PerspectiveCamera();
   mirror.layers.set(0);
   const normal = new THREE.Vector3(0, 1, 0);
@@ -172,70 +202,55 @@ export function createStream() {
   const q = new THREE.Vector4();
   const size = new THREE.Vector2();
 
-  function renderReflection(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
-    camPos.setFromMatrixPosition(camera.matrixWorld);
-    // Too far from the stream to see it: skip the extra render.
-    if (Math.abs(camPos.x - streamX(camPos.z)) > 140) {
-      mat.uniforms.uReflect.value = 0;
-      return;
-    }
-    mat.uniforms.uReflect.value = 1;
-    planePos.set(camPos.x, waterLevel(camPos.z), camPos.z);
-    view.subVectors(planePos, camPos);
-    if (view.dot(normal) > 0) return;
-    view.reflect(normal).negate().add(planePos);
-    rot.extractRotation(camera.matrixWorld);
-    lookAt.set(0, 0, -1).applyMatrix4(rot).add(camPos);
-    aim.subVectors(planePos, lookAt).reflect(normal).negate().add(planePos);
-    mirror.position.copy(view);
-    mirror.up.set(0, 1, 0).applyMatrix4(rot).reflect(normal);
-    mirror.lookAt(aim);
-    mirror.far = camera.far;
-    mirror.updateMatrixWorld();
-    mirror.projectionMatrix.copy(camera.projectionMatrix);
-
-    textureMatrix.set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
-    textureMatrix.multiply(mirror.projectionMatrix).multiply(mirror.matrixWorldInverse);
-
-    // Clip away everything under the water (oblique near plane).
-    plane.setFromNormalAndCoplanarPoint(normal, planePos).applyMatrix4(mirror.matrixWorldInverse);
-    clip.set(plane.normal.x, plane.normal.y, plane.normal.z, plane.constant);
-    const pm = mirror.projectionMatrix;
-    q.x = (Math.sign(clip.x) + pm.elements[8]) / pm.elements[0];
-    q.y = (Math.sign(clip.y) + pm.elements[9]) / pm.elements[5];
-    q.z = -1;
-    q.w = (1 + pm.elements[10]) / pm.elements[14];
-    clip.multiplyScalar(2 / clip.dot(q));
-    pm.elements[2] = clip.x;
-    pm.elements[6] = clip.y;
-    pm.elements[10] = clip.z + 1 - 0.003;
-    pm.elements[14] = clip.w;
-    mirror.projectionMatrixInverse.copy(pm).invert();
-
-    // Half the screen resolution is plenty under the ripples.
-    renderer.getDrawingBufferSize(size);
-    const w = Math.max(256, Math.round(size.x / 2));
-    const h = Math.max(256, Math.round(size.y / 2));
-    if (target.width !== w || target.height !== h) target.setSize(w, h);
-
-    mesh.visible = false;
-    const prevTarget = renderer.getRenderTarget();
-    renderer.setRenderTarget(target);
-    renderer.state.buffers.depth.setMask(true);
-    renderer.clear();
-    renderer.render(scene, mirror);
-    renderer.setRenderTarget(prevTarget);
-    mesh.visible = true;
-  }
-
   return {
-    mesh,
-    renderReflection,
-    update(time: number, sunDir: THREE.Vector3, sunColor: THREE.Color, sunStrength: number, daylight: number) {
-      mat.uniforms.uTime.value = time;
-      mat.uniforms.uSunDir.value.copy(sunDir);
-      mat.uniforms.uSunColor.value.copy(sunColor).multiplyScalar(sunStrength);
-      mat.uniforms.uLight.value = 0.08 + 0.92 * daylight;
+    camPos: new THREE.Vector3(),
+    render(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, level: number, hide: THREE.Object3D) {
+      camPos.setFromMatrixPosition(camera.matrixWorld);
+      planePos.set(camPos.x, level, camPos.z);
+      view.subVectors(planePos, camPos);
+      if (view.dot(normal) > 0) return;
+      view.reflect(normal).negate().add(planePos);
+      rot.extractRotation(camera.matrixWorld);
+      lookAt.set(0, 0, -1).applyMatrix4(rot).add(camPos);
+      aim.subVectors(planePos, lookAt).reflect(normal).negate().add(planePos);
+      mirror.position.copy(view);
+      mirror.up.set(0, 1, 0).applyMatrix4(rot).reflect(normal);
+      mirror.lookAt(aim);
+      mirror.far = camera.far;
+      mirror.updateMatrixWorld();
+      mirror.projectionMatrix.copy(camera.projectionMatrix);
+
+      textureMatrix.set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
+      textureMatrix.multiply(mirror.projectionMatrix).multiply(mirror.matrixWorldInverse);
+
+      // Clip away everything under the water (oblique near plane).
+      plane.setFromNormalAndCoplanarPoint(normal, planePos).applyMatrix4(mirror.matrixWorldInverse);
+      clip.set(plane.normal.x, plane.normal.y, plane.normal.z, plane.constant);
+      const pm = mirror.projectionMatrix;
+      q.x = (Math.sign(clip.x) + pm.elements[8]) / pm.elements[0];
+      q.y = (Math.sign(clip.y) + pm.elements[9]) / pm.elements[5];
+      q.z = -1;
+      q.w = (1 + pm.elements[10]) / pm.elements[14];
+      clip.multiplyScalar(2 / clip.dot(q));
+      pm.elements[2] = clip.x;
+      pm.elements[6] = clip.y;
+      pm.elements[10] = clip.z + 1 - clipBias;
+      pm.elements[14] = clip.w;
+      mirror.projectionMatrixInverse.copy(pm).invert();
+
+      renderer.getDrawingBufferSize(size);
+      const w = Math.max(256, Math.round(size.x * scale));
+      const h = Math.max(256, Math.round(size.y * scale));
+      if (target.width !== w || target.height !== h) target.setSize(w, h);
+
+      hide.visible = false;
+      const prevTarget = renderer.getRenderTarget();
+      renderer.setRenderTarget(target);
+      renderer.state.buffers.depth.setMask(true);
+      renderer.clear();
+      renderer.render(scene, mirror);
+      renderer.setRenderTarget(prevTarget);
+      hide.visible = true;
     },
   };
 }

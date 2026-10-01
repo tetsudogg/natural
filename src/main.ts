@@ -16,7 +16,8 @@ import { isTouchDevice, setupTouch } from './touch';
 import { clearings } from './world';
 import { createMap } from './map';
 import { createCritters } from './critters';
-import { waterSurfaceAt } from './terrain';
+import { createPond } from './pond';
+import { groundHeight, waterSurfaceAt } from './terrain';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -98,6 +99,8 @@ async function main() {
   scene.add(floor.group);
   const stream = createStream();
   scene.add(stream.mesh);
+  const pond = createPond();
+  scene.add(pond.group);
   const brookWater = createBrooks();
   scene.add(brookWater.group);
   brookWater.group.traverse((o) => o.layers.set(NO_REFLECT_LAYER));
@@ -142,7 +145,12 @@ async function main() {
     toast(campfire.build(player.position, player.yaw));
     campfire.debugBlaze();
   }
-  player.blocker = (x, z) => tent.blocks(x, z);
+  // The tent, and water too deep to wade (the pond beyond its shallows).
+  player.blocker = (x, z) => {
+    if (tent.blocks(x, z)) return true;
+    const surf = waterSurfaceAt(x, z);
+    return surf !== null && surf - groundHeight(x, z) > 0.9;
+  };
   tent.avoid = () => campfire.clearing;
   // ?debug exposes the game objects for automated checks.
   if (new URLSearchParams(location.search).has('debug')) Object.assign(window, { natural: { tent, campfire, player, floor, critters } });
@@ -494,6 +502,7 @@ async function main() {
     const day = sky.update(hour, player.position);
     stream.update(elapsed, day.sunDir, day.sunColor, day.sunIntensity, day.daylight);
     brookWater.update(elapsed, day.sunDir, day.sunColor, day.sunIntensity, day.daylight, day.fogColor);
+    pond.update(elapsed, day.sunDir, day.sunColor, day.sunIntensity, day.daylight, day.fogColor);
     fireflies.update(elapsed, day.night);
     wildlife.update(elapsed, dt, day.daylight, player.position, camera);
     critters.update(elapsed, dt, player.position, day.daylight);
@@ -522,6 +531,7 @@ async function main() {
     windUniforms.uSunView.value.copy(day.sunDir).transformDirection(camera.matrixWorldInverse);
     windUniforms.uSunColor.value.copy(day.sunColor).multiplyScalar(day.sunIntensity * 0.35);
     stream.renderReflection(renderer, scene, camera);
+    pond.renderReflection(renderer, scene, camera);
     renderer.shadowMap.needsUpdate = true;
     post.render(scene, camera, day);
     if (++frames >= frameLimit) {

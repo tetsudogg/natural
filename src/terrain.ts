@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HALF, brookEdgeDist, forestDensity, heightAt, nearestBrook, streamDist, waterDist, waterLevel } from './world';
+import { HALF, POND_LEVEL, brookEdgeDist, farRange, forestDensity, heightAt, nearestBrook, pondMask, streamDist, waterDist, waterLevel } from './world';
 import { fbm, lerp, smoothstep } from './noise';
 import { surface } from './textures';
 
@@ -13,19 +13,32 @@ const FOREST_FLOOR = srgb(0.22, 0.2, 0.13);
 const MOSS = srgb(0.26, 0.42, 0.1);
 const ROCK = srgb(0.4, 0.39, 0.36);
 const FAR_FOREST = srgb(0.1, 0.24, 0.07);
+const tmpC = new THREE.Color();
+const FAR_ROCK = srgb(0.42, 0.42, 0.44);
+const SNOW = srgb(0.92, 0.94, 0.97);
 
-function colorAt(x: number, z: number, slope: number, out: THREE.Color, far: boolean) {
+function colorAt(x: number, y: number, z: number, slope: number, out: THREE.Color, far: boolean) {
   const d = waterDist(x, z);
   const n = fbm(x * 0.05 + 3, z * 0.05 - 8, 3);
   const forest = forestDensity(x, z);
   out.copy(GRASS).lerp(GRASS_DRY, smoothstep(0.45, 0.75, n) * 0.7);
   out.lerp(forest > 0.5 ? MOSS : FOREST_FLOOR, smoothstep(0.1, 0.7, forest) * lerp(0.6, 1, n));
   out.lerp(MUD, 1 - smoothstep(4.5, 7.5, d));
-  out.lerp(GRAVEL, 1 - smoothstep(3.2, 5.2, d));
+  // From afar a pale gravel edge reads as a glaring white line, so the far ring keeps it muddy.
+  out.lerp(far ? MUD : GRAVEL, 1 - smoothstep(3.2, 5.2, d));
   out.lerp(ROCK, smoothstep(0.55, 0.95, slope));
   if (far) {
     const edge = smoothstep(HALF, HALF + 200, Math.max(Math.abs(x), Math.abs(z)));
-    out.lerp(FAR_FOREST, edge * (1 - smoothstep(0.8, 1.2, slope) * 0.5));
+    // Forest canopy from afar: dark, mottled by stands of lighter larch and deeper spruce.
+    const stand = fbm(x * 0.018 - 11, z * 0.018 + 6, 3);
+    tmpC.copy(FAR_FOREST).multiplyScalar(0.7 + 0.6 * stand);
+    out.lerp(tmpC, edge * (1 - smoothstep(1.2, 1.8, slope) * 0.6));
+    // High up: bare grey rock above the trees, snow lying in the gullies near the top.
+    // Only the great range to the north climbs past the trees.
+    const up = farRange(x, z) + (y - POND_LEVEL) * 0.15;
+    out.lerp(FAR_ROCK, smoothstep(190, 290, up + (n - 0.5) * 80) * (0.6 + 0.4 * smoothstep(0.5, 1, slope)));
+    const gully = smoothstep(0.52, 0.68, fbm(x * 0.012 + 5, z * 0.004, 3));
+    out.lerp(SNOW, smoothstep(330, 430, up + gully * 140) * (1 - smoothstep(1.4, 2.2, slope) * 0.7));
   }
   return out;
 }
@@ -39,7 +52,7 @@ function buildGrid(size: number, segs: number, far: boolean) {
     const z = pos.getZ(i);
     let y = heightAt(x, z);
     // The far ring tucks under the detailed centre so the two never fight.
-    // 3200 / 160 puts a far vertex exactly on the centre's edge, so there is no gap.
+    // 6400 / 320 puts a far vertex exactly on the centre's edge, so there is no gap.
     if (far && Math.abs(x) < HALF - 2 && Math.abs(z) < HALF - 2) y -= 30;
     pos.setY(i, y);
   }
@@ -50,7 +63,7 @@ function buildGrid(size: number, segs: number, far: boolean) {
   for (let i = 0; i < pos.count; i++) {
     const ny = nrm.getY(i);
     const slope = Math.sqrt(Math.max(0, 1 - ny * ny)) / Math.max(ny, 0.05);
-    colorAt(pos.getX(i), pos.getZ(i), slope, c, far);
+    colorAt(pos.getX(i), pos.getY(i), pos.getZ(i), slope, c, far);
     colors[i * 3] = c.r;
     colors[i * 3 + 1] = c.g;
     colors[i * 3 + 2] = c.b;
@@ -173,7 +186,7 @@ export function createTerrain() {
   main.receiveShadow = true;
 
   const farMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
-  const far = new THREE.Mesh(buildGrid(3200, 160, true), farMat);
+  const far = new THREE.Mesh(buildGrid(6400, 320, true), farMat);
 
   const group = new THREE.Group();
   group.add(main, far);
@@ -220,6 +233,7 @@ export function groundSlope(x: number, z: number) {
 // otherwise null.
 export function waterSurfaceAt(x: number, z: number): number | null {
   const g = groundHeight(x, z);
+  if (z > 150 && pondMask(x, z) > 0.01 && POND_LEVEL > g + 0.02) return POND_LEVEL;
   if (streamDist(x, z) < 16 && waterLevel(z) > g + 0.02) return waterLevel(z);
   if (brookEdgeDist(x, z) < 0.3) {
     const b = nearestBrook(x, z);

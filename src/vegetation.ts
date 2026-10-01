@@ -819,6 +819,7 @@ export function createVegetation() {
     const brookBank = brookEdgeDist(x, z);
     const damp = brookBank > 1.2 ? 1 - THREE.MathUtils.smoothstep(brookBank, 1, 9) : 0;
     if (brookBank < 1.2 || rnd() > Math.max(THREE.MathUtils.smoothstep(dens, 0.2, 0.7) * 0.5, damp * 0.9)) continue;
+    if (waterDist(x, z) < 4.5) continue;
     if (groundSlope(x, z) > (damp > 0 ? 1.4 : 0.8)) continue;
     const s = 0.6 + rnd() * 0.7;
     const m = new THREE.Matrix4().compose(

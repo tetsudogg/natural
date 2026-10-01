@@ -57,6 +57,39 @@ export function clearingFactor(x: number, z: number) {
   return f;
 }
 
+// ---------- The pond ----------
+// Downstream the valley opens into a wide basin and the stream fills a big, still pond,
+// like Taisho-ike at Kamikochi: forest and gravel shores, dead trees standing in the
+// shallows, and a high, snow-streaked range beyond, all mirrored in the water.
+
+export const POND = { x: 45, z: 480, rx: 240, rz: 250 };
+export const POND_LEVEL = waterLevel(232);
+
+function pondE(x: number, z: number) {
+  return Math.hypot((x - POND.x) / POND.rx, (z - POND.z) / POND.rz) + (fbm(x * 0.007 + 17, z * 0.007 - 5, 3) - 0.5) * 0.45;
+}
+
+// 1 in the basin, 0 outside, with an uneven edge.
+export function pondMask(x: number, z: number) {
+  if (z < 150) return 0;
+  return 1 - smoothstep(0.72, 1.12, pondE(x, z));
+}
+
+// The low, flat, wooded ground around the pond before the mountains rise.
+function lowland(x: number, z: number) {
+  if (z < 120) return 0;
+  return 1 - smoothstep(1.0, 2.3, pondE(x, z));
+}
+
+// The far range beyond the pond: a long wall of jagged peaks with snow in the gullies.
+export function farRange(x: number, z: number) {
+  const env = Math.exp(-(((z - 1950) / 360) ** 2)) * (1 - smoothstep(1400, 2600, Math.abs(x)) * 0.6);
+  if (env < 0.01) return 0;
+  const ridge = 1 - Math.abs(2 * fbm(x * 0.0018 + 3, z * 0.0018 + 9, 4) - 1);
+  const jag = 1 - Math.abs(2 * fbm(x * 0.008 - 4, z * 0.008 + 2, 3) - 1);
+  return env * (200 + 230 * ridge * ridge + 100 * jag * jag);
+}
+
 // 0 = open ground, 1 = dense forest.
 export function forestDensity(x: number, z: number) {
   const d = streamDist(x, z);
@@ -76,7 +109,9 @@ function baseHeight(x: number, z: number) {
   // Bend the contours so the slopes don't run neatly parallel to the stream.
   const away = smoothstep(18, 90, d0);
   const d = Math.max(0, d0 + (fbm(x * 0.006 + 31, z * 0.006 - 7, 3) - 0.5) * 70 * away);
-  const mountain = 0.2 * Math.max(0, d - 26) + 0.0008 * Math.max(0, d - 26) ** 2;
+  // Beyond the walkable valley the slopes level off into rolling forested hills.
+  const dm = d < 320 ? d : 320 + 70 * (1 - Math.exp(-(d - 320) / 70));
+  const mountain = 0.2 * Math.max(0, dm - 26) + 0.0008 * Math.max(0, dm - 26) ** 2;
   let rise = 5 * smoothstep(12, 55, d0) + mountain * (0.75 + 0.5 * fbm(x * 0.005 - 3, z * 0.005 + 11, 3));
   // Spurs and gullies: sharp-crested ridged noise, stronger higher up.
   const rn = 1 - Math.abs(2 * fbm(x * 0.011 + 5, z * 0.011 - 13, 4) - 1);
@@ -86,8 +121,21 @@ function baseHeight(x: number, z: number) {
   // Rocky crags: short, steep lumps here and there.
   const crag = Math.max(0, fbm(x * 0.045 + 21, z * 0.045 - 2, 3) - 0.6);
   rise += crag * crag * 90 * smoothstep(35, 110, d0);
-  let h = floorHeight(z, d0) + Math.max(0, rise);
-  h += 160 * smoothstep(320, 1000, r) * (0.5 + fbm(x * 0.002 + 7, z * 0.002, 3));
+  const pond = pondMask(x, z);
+  const low = lowland(x, z);
+  // Past the pond's inlet the valley floor stops falling; the pond fills the hollow.
+  let fl = floorHeight(z, d0);
+  if (z > 232) fl = Math.max(fl, POND_LEVEL + 1.2 + 0.03 * Math.max(0, z - 760));
+  let h = fl + Math.max(0, rise) * (1 - 0.88 * low);
+  // Lower in the wide valley north of the pond, so the range shows from its forested feet up.
+  const vale = smoothstep(600, 950, z) * (1 - smoothstep(350, 1000, Math.abs(x - POND.x)));
+  h += 160 * smoothstep(320, 1000, r) * (0.5 + fbm(x * 0.002 + 7, z * 0.002, 3)) * (1 - low) * (1 - 0.7 * vale);
+  h += farRange(x, z);
+  if (pond > 0) {
+    // The basin: a broad, shallow bowl under the pond, shelving up to its shores.
+    const bowl = POND_LEVEL - 0.6 - 5 * smoothstep(0.35, 1, pond) + (fbm(x * 0.02, z * 0.02 + 40, 2) - 0.5) * 1.2;
+    h += (bowl - h) * smoothstep(0, 0.6, pond);
+  }
   h += smoothstep(0, 9, d0) * 0.9;
   return h;
 }
@@ -418,7 +466,12 @@ export function nearestBrook(x: number, z: number) {
 // Distance to open water, main stream or brook, measured so that the water's edge is
 // about 4 m for both (the main stream's bank). Use this to keep things out of water.
 export function waterDist(x: number, z: number) {
-  return Math.min(streamDist(x, z), brookEdgeDist(x, z) + 3.3);
+  let d = Math.min(streamDist(x, z), brookEdgeDist(x, z) + 3.3);
+  if (z > 150 && pondMask(x, z) > 0.01) {
+    // Near the pond: about 6 m of shore per metre above the water, edge at 4 m like the stream.
+    d = Math.min(d, 4 + Math.max(-4, (heightAt(x, z) - POND_LEVEL) * 6));
+  }
+  return d;
 }
 
 export function heightAt(x: number, z: number) {

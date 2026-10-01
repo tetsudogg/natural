@@ -141,7 +141,9 @@ export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
     tmp.lerp(NIGHT_FOG, 1 - state.daylight);
     fog.color.copy(tmp);
     const evening = smoothstep(17, 19, hour) * (1 - smoothstep(21, 23, hour));
-    fog.near = 0.0022 + morning * 0.017 + evening * 0.004 + (1 - state.daylight) * 0.0015;
+    // By the pond the air is clearer still, so the far shore and the peaks mirror crisply.
+    const byPond = smoothstep(120, 220, focus.z);
+    fog.near = 0.0014 * (1 - 0.65 * byPond) + morning * 0.017 + evening * 0.004 + (1 - state.daylight) * 0.0015;
     fog.far = waterLevel(focus.z) + 1.5;
     state.mist = morning;
     state.warm = warm;
