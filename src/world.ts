@@ -131,6 +131,15 @@ function baseHeight(x: number, z: number) {
   const vale = smoothstep(600, 950, z) * (1 - smoothstep(350, 1000, Math.abs(x - POND.x)));
   h += 160 * smoothstep(320, 1000, r) * (0.5 + fbm(x * 0.002 + 7, z * 0.002, 3)) * (1 - low) * (1 - 0.7 * vale);
   h += farRange(x, z);
+  // Beyond the walkable map the hillsides get spurs and ravines, so they don't read as smooth
+  // bald domes from the pond.
+  const out = smoothstep(HALF + 10, HALF + 160, Math.max(Math.abs(x), Math.abs(z)));
+  if (out > 0) {
+    const climb = smoothstep(4, 90, h - POND_LEVEL);
+    const sp = 1 - Math.abs(2 * fbm(x * 0.0045 - 21, z * 0.0045 + 13, 4) - 1);
+    const fine = 1 - Math.abs(2 * fbm(x * 0.013 + 8, z * 0.013 - 30, 3) - 1);
+    h += out * climb * ((sp * sp - 0.4) * 55 + (fine * fine - 0.4) * 16);
+  }
   if (pond > 0) {
     // The basin: a broad, shallow bowl under the pond, shelving up to its shores.
     const bowl = POND_LEVEL - 0.6 - 5 * smoothstep(0.35, 1, pond) + (fbm(x * 0.02, z * 0.02 + 40, 2) - 0.5) * 1.2;

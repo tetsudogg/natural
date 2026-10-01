@@ -186,6 +186,40 @@ export function createTerrain() {
   main.receiveShadow = true;
 
   const farMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
+  // From afar the forest is a texture of crowns: lit tops and dark gaps, finer up close.
+  farMat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vFarW;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFarW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+        varying vec3 vFarW;
+        float fh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float fn(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(mix(fh(i), fh(i + vec2(1, 0)), u.x), mix(fh(i + vec2(0, 1)), fh(i + vec2(1, 1)), u.x), u.y);
+        }`,
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        {
+          float dist = length(vFarW - cameraPosition);
+          vec2 p = vFarW.xz;
+          float crowns = fn(p * 0.11) * smoothstep(1400.0, 300.0, dist);
+          float stands = fn(p * 0.025 + 7.0);
+          float clumps = fn(p * 0.006 - 3.0);
+          float tree = mix(0.5, crowns, 0.75) * 0.5 + stands * 0.3 + clumps * 0.2;
+          // Only the green of the forest: rock and snow keep their own colour.
+          float forest = clamp((diffuseColor.g - diffuseColor.r) * 9.0, 0.0, 1.0);
+          diffuseColor.rgb *= mix(1.0, mix(0.55, 1.35, tree), forest);
+          diffuseColor.rgb *= mix(0.9, 1.08, fn(p * 0.04 + 31.0));
+        }`,
+      );
+  };
   const far = new THREE.Mesh(buildGrid(6400, 320, true), farMat);
 
   const group = new THREE.Group();

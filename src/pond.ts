@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { HALF, POND, POND_LEVEL, heightAt, pondMask } from './world';
 import { waterNormalTexture } from './textures';
-import { fbm, mulberry32 } from './noise';
+import { fbm, mulberry32, smoothstep } from './noise';
 import { createMirror } from './water';
 
 const vert = /* glsl */ `
@@ -255,6 +255,36 @@ export function createPond() {
     });
     group.add(mesh);
   });
+
+  // Further up and further off, a cover of plain cones: cheap enough to clothe whole
+  // hillsides, so the slopes read as forest rather than bare ground.
+  const cone = new THREE.ConeGeometry(2.4, 13, 6, 1, true);
+  cone.translate(0, 7, 0);
+  const far: { m: THREE.Matrix4; c: THREE.Color }[] = [];
+  for (let tries = 0; far.length < 45000 && tries < 900000; tries++) {
+    const x = POND.x + (rnd() * 2 - 1) * 1400;
+    const z = 260 + rnd() * 1550;
+    if (Math.abs(x) < HALF + 20 && Math.abs(z) < HALF + 20) continue;
+    const h = heightAt(x, z);
+    const above = h - POND_LEVEL;
+    if (above < 6 || above > 420) continue;
+    // Thinning towards the tree line, in stands with gaps between.
+    if (rnd() > 0.85 * (1 - smoothstep(250, 420, above)) || fbm(x * 0.008 + 3, z * 0.008 - 9, 2) < 0.26) continue;
+    const s = 0.6 + rnd() * 0.8;
+    const m = new THREE.Matrix4().compose(new THREE.Vector3(x, h - 0.5, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6.28), new THREE.Vector3(s, s * (0.8 + rnd() * 0.5), s));
+    const larchy = rnd() < 0.35 - Math.min(0.3, above / 600);
+    const v = 0.75 + rnd() * 0.4;
+    const c = larchy
+      ? new THREE.Color().setRGB(0.27, 0.38, 0.15, THREE.SRGBColorSpace).multiplyScalar(v)
+      : new THREE.Color().setRGB(0.09, 0.17, 0.11, THREE.SRGBColorSpace).multiplyScalar(v);
+    far.push({ m, c });
+  }
+  const farCones = new THREE.InstancedMesh(cone, coniferMat, far.length);
+  far.forEach(({ m, c }, k) => {
+    farCones.setMatrixAt(k, m);
+    farCones.setColorAt(k, c);
+  });
+  group.add(farCones);
 
   const mirror = createMirror(target, textureMatrix, 0.5, 0.00005);
   const frustum = new THREE.Frustum();
