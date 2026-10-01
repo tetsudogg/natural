@@ -92,24 +92,26 @@ function snagGeometry(seed: number) {
 function sasaGeometry(seed: number) {
   const rnd = mulberry32(seed);
   const parts: THREE.BufferGeometry[] = [];
-  const culms = 7 + Math.floor(rnd() * 5);
+  const culms = 9 + Math.floor(rnd() * 5);
   for (let c = 0; c < culms; c++) {
     const bx = (rnd() - 0.5) * 0.7;
     const bz = (rnd() - 0.5) * 0.7;
-    const h = 0.55 + rnd() * 0.6;
+    const h = 0.4 + rnd() * 0.5;
     const lean = new THREE.Vector3((rnd() - 0.5) * 0.25, 1, (rnd() - 0.5) * 0.25).normalize();
-    const top = new THREE.Vector3(bx, 0, bz).addScaledVector(lean, h);
     // The culm starts well below the soil so it still reaches the ground on a slope.
-    const stem = new THREE.CylinderGeometry(0.004, 0.006, h + 0.6, 3);
+    const r = 0.006 + rnd() * 0.004;
+    const stem = new THREE.CylinderGeometry(r * 0.7, r, h + 0.6, 4);
     stem.translate(0, (h + 0.6) / 2 - 0.6, 0);
     stem.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(UP, lean));
     stem.translate(bx, 0, bz);
-    setUv(stem, 0.5, 0.02);
+    // Sampled from the body of a leaf (the gaps between leaves are transparent).
+    setUv(stem, 0.35, 0.45);
     parts.push(stem);
-    const leaves = 5 + Math.floor(rnd() * 3);
+    // Leaves come off a few nodes on the upper part of the culm, the most at the top.
+    const leaves = 10 + Math.floor(rnd() * 5);
     for (let l = 0; l < leaves; l++) {
-      const len = 0.2 + rnd() * 0.1;
-      const leaf = new THREE.PlaneGeometry(0.06, len, 1, 4);
+      const len = 0.22 + rnd() * 0.12;
+      const leaf = new THREE.PlaneGeometry(0.075, len, 1, 4);
       leaf.translate(0, len / 2, 0);
       // Droop: the leaf arches down toward its tip.
       const lp = leaf.attributes.position as THREE.BufferAttribute;
@@ -117,9 +119,10 @@ function sasaGeometry(seed: number) {
         const t = lp.getY(i) / len;
         lp.setZ(i, -t * t * len * 0.55);
       }
-      leaf.rotateX(-Math.PI / 2 + 0.5 + rnd() * 0.5);
+      leaf.rotateX(-Math.PI / 2 + 0.25 + rnd() * 0.5);
       leaf.rotateY((l / leaves) * Math.PI * 2 + rnd() * 0.6);
-      const node = top.clone().addScaledVector(lean, -rnd() * 0.12);
+      const along = l < leaves * 0.4 ? h : h * (0.3 + rnd() * 0.6);
+      const node = new THREE.Vector3(bx, 0, bz).addScaledVector(lean, along);
       leaf.translate(node.x, node.y, node.z);
       const cell = Math.floor(rnd() * 4);
       const uv = leaf.attributes.uv as THREE.BufferAttribute;

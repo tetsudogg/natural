@@ -18,7 +18,7 @@
         <ul class="keys">
           <li><kbd>W A S D</kbd> 歩く　<kbd>Shift</kbd> 走る　マウスで見回す</li>
           <li><kbd>C</kbd> 一人称／三人称　<kbd>V</kbd> 眺めモード　<kbd>F</kbd> 全画面</li>
-          <li><kbd>T</kbd> 時間の速さ　<kbd>Q</kbd> 画質　<kbd>H</kbd> 操作の表示</li>
+          <li><kbd>M</kbd> マップ　<kbd>T</kbd> 時間の速さ　<kbd>Q</kbd> 画質　<kbd>H</kbd> 操作の表示</li>
           <li><kbd>E</kbd> 枝を拾う／くべる　<kbd>B</kbd> 焚き火を組む（枝 5 本）　<kbd>P</kbd> テントを張る</li>
         </ul>
         <p class="touch-keys">画面の左側をなぞって歩く（大きく倒すと走る）<br />右側をなぞって見回す<br />右下のボタンで 拾う・焚き火・テント など</p>
@@ -34,15 +34,41 @@
 
     <div id="hud">
       <div id="help" class="help">
-        <kbd>WASD</kbd> 歩く　<kbd>Shift</kbd> 走る　<kbd>C</kbd> 視点　<kbd>V</kbd> 眺めモード　<kbd>F</kbd> 全画面　<kbd>E</kbd> 拾う　<kbd>B</kbd> 焚き火　<kbd>P</kbd> テント　<kbd>T</kbd> 時間　<kbd>Q</kbd> 画質　<kbd>H</kbd> 操作を隠す
+        <kbd>WASD</kbd> 歩く　<kbd>Shift</kbd> 走る　<kbd>C</kbd> 視点　<kbd>V</kbd> 眺める　<kbd>F</kbd> 全画面　<kbd>E</kbd> 拾う　<kbd>B</kbd> 焚き火　<kbd>P</kbd> テント　<kbd>M</kbd> マップ　<kbd>T</kbd> 時間　<kbd>Q</kbd> 画質　<kbd>H</kbd> 隠す
       </div>
-      <button id="view-btn" type="button" title="眺めモード (V)">眺める</button>
+      <div id="minimap">
+        <canvas id="mini" width="300" height="300"></canvas>
+        <div id="compass" title="方位磁針"><div id="needle"><span class="n"></span><span class="s"></span></div><b>N</b></div>
+      </div>
+    </div>
+
+    <div id="map" hidden>
+      <div class="map-frame">
+        <canvas id="map-canvas"></canvas>
+        <div class="map-bar">
+          <span class="map-title">マップ</span>
+          <button type="button" id="map-add">この場所を記録</button>
+          <span class="map-tip">ホイールで拡大・ドラッグで移動・印を選ぶと編集</span>
+          <button type="button" id="map-close" title="閉じる (M)">✕</button>
+        </div>
+        <div id="pin-pop" hidden>
+          <input id="pin-note" type="text" maxlength="12" placeholder="メモ（10文字ほど）" />
+          <div class="pin-actions">
+            <button type="button" id="pin-go">移動する</button>
+            <button type="button" id="pin-color">色を変える</button>
+            <button type="button" id="pin-del" title="この印を消す">消す</button>
+          </div>
+          <div id="pin-swatches" hidden></div>
+        </div>
+      </div>
     </div>
 
     <div id="touch">
       <div id="stick"><div id="knob"></div></div>
       <div id="touch-buttons">
         <button type="button" id="touch-cancel" data-key="Escape" hidden><b>✕</b>やめる</button>
+        <button type="button" data-key="KeyV"><b>V</b>眺める</button>
+        <button type="button" data-key="KeyM"><b>M</b>マップ</button>
         <button type="button" data-key="KeyF"><b>F</b>全画面</button>
         <button type="button" data-key="KeyQ"><b>Q</b>画質</button>
         <button type="button" data-key="KeyT"><b>T</b>時間</button>

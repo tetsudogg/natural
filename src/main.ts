@@ -14,6 +14,7 @@ import { Player, type ViewMode } from './player';
 import { Soundscape } from './audio';
 import { isTouchDevice, setupTouch } from './touch';
 import { clearings } from './world';
+import { createMap } from './map';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -167,6 +168,29 @@ async function main() {
   startBtn.hidden = false;
   startBtn.focus();
 
+  // The map: marks favourite places and jumps back to them (the time of day stays).
+  const map = createMap({
+    player: () => ({ x: player.position.x, z: player.position.z, yaw: player.yaw }),
+    opened: () => {
+      player.releaseKeys();
+      player.stick.x = player.stick.y = 0;
+      touch?.reset();
+      if (document.pointerLockElement) document.exitPointerLock();
+    },
+    closed: () => {
+      pause.hidden = true;
+      lock();
+    },
+    jump: (pin) => {
+      if (tent.inside) leaveTent();
+      if (tent.placing) tent.cancel();
+      player.position.set(pin.x, player.position.y, pin.z);
+      player.yaw = pin.yaw;
+      player.pitch = -0.05;
+      toast(pin.note ? `「${pin.note}」に来ました` : '記録した場所に来ました');
+    },
+  });
+
   let started = false;
   let viewing = false;
   let motion: ViewMotion = 'still';
@@ -228,7 +252,6 @@ async function main() {
   }
 
   startBtn.addEventListener('click', start);
-  $('view-btn').addEventListener('click', () => (viewing ? exitView() : enterView()));
   pause.addEventListener('click', () => {
     pause.hidden = true;
     lock();
@@ -242,7 +265,7 @@ async function main() {
   document.addEventListener('pointerlockchange', () => {
     const locked = document.pointerLockElement === canvas;
     if (!locked) player.releaseKeys();
-    pause.hidden = locked || viewing || !started;
+    pause.hidden = locked || viewing || !started || map.open;
   });
 
   document.addEventListener('mousemove', (e) => {
@@ -294,8 +317,13 @@ async function main() {
       case 'KeyV':
         viewing ? exitView() : enterView();
         return;
+      case 'KeyM':
+        if (viewing || sleeping) return;
+        map.toggle();
+        return;
       case 'Escape':
-        if (viewing) exitView();
+        if (map.open) map.close();
+        else if (viewing) exitView();
         else if (tent.placing) tent.cancel();
         return;
       case 'KeyC':
@@ -362,6 +390,11 @@ async function main() {
       return;
     }
     if (e.repeat) return;
+    // With the map open only M and Esc do anything (the note box takes the typing).
+    if (map.open) {
+      if (e.code === 'KeyM' || e.code === 'Escape') press(e.code);
+      return;
+    }
     if (tent.inside && !viewing && ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
       leaveTent();
       return;
@@ -372,7 +405,7 @@ async function main() {
 
   const touch = touchDevice
     ? setupTouch(canvas, {
-        active: () => started && !viewing && !sleeping,
+        active: () => started && !viewing && !sleeping && !map.open,
         move: (x, y) => {
           if (tent.inside && Math.hypot(x, y) > 0.5) leaveTent();
           player.stick.x = x;
@@ -405,6 +438,8 @@ async function main() {
   let frames = 0;
   let hintTick = 0;
   const hintEl = $('hint');
+  // What you can do right here is shown at the start of the bottom bar, not mid-screen.
+  if (!touch) help.prepend(hintEl);
   const packEl = $('pack');
   const timer = new THREE.Timer();
   timer.connect(document);
@@ -464,6 +499,7 @@ async function main() {
       hintEl.classList.toggle('show', !!h);
       packEl.textContent = campfire.pack > 0 ? `枝 ${campfire.pack} 本` : '';
     }
+    if (started && !viewing && hintTick % 2 === 0) map.update();
     for (const g of veg.cullGroups) updateDistanceCulling(g, camera.position);
     for (const g of floor.cullGroups) updateDistanceCulling(g, camera.position);
     for (const g of campfire.cullGroups) updateDistanceCulling(g, camera.position);
