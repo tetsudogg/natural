@@ -760,7 +760,9 @@ export function createVegetation() {
         }
         // and a block down the face of the step beside the water.
         const o = side * (f.width + 0.4 + rnd() * 0.4);
-        addRock(f.x + sx * o, f.z + sz * o, 0.4 + H * 0.2, 0.4);
+        // (below a tall fall it rests on the pool floor instead, not halfway up the cliff)
+        if (H > 2.5) addRock(f.x + f.dirX * 1.2 + sx * (o + side * 0.6), f.z + f.dirZ * 1.2 + sz * (o + side * 0.6), 0.5 + H * 0.12, 0.4);
+        else addRock(f.x + sx * o, f.z + sz * o, 0.4 + H * 0.2, 0.4);
       }
       // A stone or two sitting in the pool below.
       for (let i = 0; i < 2; i++) {

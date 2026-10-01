@@ -2,7 +2,7 @@
 // a full-screen map (M) where favourite places can be marked, given a short note and a
 // colour, and jumped back to. North is -z, east is +x (the sun rises over +x).
 
-import { HALF, brookEdgeDist, clearingFactor, forestDensity, waterLevel } from './world';
+import { HALF, brooks, clearingFactor, forestDensity, streamX, waterLevel } from './world';
 import { groundHeight, groundSlope } from './terrain';
 
 export interface Pin {
@@ -16,7 +16,6 @@ export interface Pin {
 
 export const PIN_COLORS = ['#e8574a', '#f0a830', '#f2e14c', '#5cc46a', '#4aa3e8', '#b07ce8', '#f4f2ec'];
 const PINS_KEY = 'natural.pins.v1';
-const MAP_PX = 400; // the whole world, 1.5 m per pixel
 const MINI_RANGE = 70; // metres from the centre to the edge of the minimap
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -38,58 +37,170 @@ function savePins(pins: Pin[]) {
   }
 }
 
-// A shaded relief of the world: forest and meadow colours, grey crags, water in blue,
-// contour lines every 10 m.
-function paintWorld() {
+// A shaded relief of the world: forest and meadow colours and grey crags, painted on a
+// coarse grid and drawn smoothed. Water and contour lines are vector paths on top, so
+// they stay crisp at any zoom.
+const GRID = 300; // 2 m per cell
+function paintRelief(h: Float32Array) {
   const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = MAP_PX;
+  canvas.width = canvas.height = GRID;
   const ctx = canvas.getContext('2d')!;
-  const img = ctx.createImageData(MAP_PX, MAP_PX);
-  const m = (HALF * 2) / MAP_PX;
-  const h = new Float32Array(MAP_PX * MAP_PX);
-  for (let j = 0; j < MAP_PX; j++)
-    for (let i = 0; i < MAP_PX; i++) h[j * MAP_PX + i] = groundHeight(-HALF + (i + 0.5) * m, -HALF + (j + 0.5) * m);
-  for (let j = 0; j < MAP_PX; j++) {
-    for (let i = 0; i < MAP_PX; i++) {
+  const img = ctx.createImageData(GRID, GRID);
+  const m = (HALF * 2) / GRID;
+  for (let j = 0; j < GRID; j++) {
+    for (let i = 0; i < GRID; i++) {
       const x = -HALF + (i + 0.5) * m;
       const z = -HALF + (j + 0.5) * m;
-      const c = h[j * MAP_PX + i];
-      const e = h[j * MAP_PX + Math.min(MAP_PX - 1, i + 1)];
-      const s = h[Math.min(MAP_PX - 1, j + 1) * MAP_PX + i];
+      const w = h[j * GRID + Math.max(0, i - 1)];
+      const e = h[j * GRID + Math.min(GRID - 1, i + 1)];
+      const n = h[Math.max(0, j - 1) * GRID + i];
+      const s = h[Math.min(GRID - 1, j + 1) * GRID + i];
       // Light from the north-west.
-      const shade = Math.max(0.45, Math.min(1.25, 0.9 - ((e - c) + (s - c)) * 0.35 / m));
+      const shade = Math.max(0.5, Math.min(1.2, 0.92 - ((e - w) + (s - n)) * 0.18 / m));
       const dens = forestDensity(x, z);
       const open = clearingFactor(x, z);
-      let r = 150 - dens * 70;
-      let g = 168 - dens * 50;
-      let b = 108 - dens * 40;
-      r += open * 40;
-      g += open * 30;
-      b += open * 10;
+      let r = 168 - dens * 62 + open * 12;
+      let g = 180 - dens * 42 + open * 10;
+      let b = 132 - dens * 40 + open * 4;
       const rock = Math.min(1, Math.max(0, (groundSlope(x, z) - 0.9) * 2));
-      r += (140 - r) * rock;
-      g += (136 - g) * rock;
-      b += (126 - b) * rock;
-      r *= shade;
-      g *= shade;
-      b *= shade;
-      if (c < waterLevel(z) + 0.05 || brookEdgeDist(x, z) < 0.3) {
-        r = 70;
-        g = 140;
-        b = 190;
-      } else if (Math.floor(c / 10) !== Math.floor(e / 10) || Math.floor(c / 10) !== Math.floor(s / 10)) {
-        r *= 0.72;
-        g *= 0.72;
-        b *= 0.72;
-      }
-      const k = (j * MAP_PX + i) * 4;
-      img.data[k] = r;
-      img.data[k + 1] = g;
-      img.data[k + 2] = b;
+      r += (150 - r) * rock;
+      g += (146 - g) * rock;
+      b += (136 - b) * rock;
+      const k = (j * GRID + i) * 4;
+      img.data[k] = r * shade;
+      img.data[k + 1] = g * shade;
+      img.data[k + 2] = b * shade;
       img.data[k + 3] = 255;
     }
   }
   ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+// Contour lines every 10 m (marching squares), with every fifth one heavier.
+function contours(h: Float32Array) {
+  const thin = new Path2D();
+  const thick = new Path2D();
+  const m = (HALF * 2) / GRID;
+  const px = (i: number) => -HALF + (i + 0.5) * m;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of h) {
+    lo = Math.min(lo, v);
+    hi = Math.max(hi, v);
+  }
+  for (let level = Math.ceil(lo / 10) * 10; level <= hi; level += 10) {
+    const path = level % 50 === 0 ? thick : thin;
+    for (let j = 0; j < GRID - 1; j++) {
+      for (let i = 0; i < GRID - 1; i++) {
+        const a = h[j * GRID + i] - level;
+        const b = h[j * GRID + i + 1] - level;
+        const c = h[(j + 1) * GRID + i + 1] - level;
+        const d = h[(j + 1) * GRID + i] - level;
+        const pts: number[] = [];
+        const cut = (v0: number, v1: number, x0: number, z0: number, x1: number, z1: number) => {
+          if (v0 < 0 !== v1 < 0) {
+            const t = v0 / (v0 - v1);
+            pts.push(x0 + (x1 - x0) * t, z0 + (z1 - z0) * t);
+          }
+        };
+        const x0 = px(i);
+        const x1 = px(i + 1);
+        const z0 = px(j);
+        const z1 = px(j + 1);
+        cut(a, b, x0, z0, x1, z0);
+        cut(b, c, x1, z0, x1, z1);
+        cut(c, d, x1, z1, x0, z1);
+        cut(d, a, x0, z1, x0, z0);
+        for (let k = 0; k + 3 < pts.length; k += 4) {
+          path.moveTo(pts[k], pts[k + 1]);
+          path.lineTo(pts[k + 2], pts[k + 3]);
+        }
+      }
+    }
+  }
+  return { thin, thick };
+}
+
+// The stream and the brooks as filled shapes.
+function waterPath() {
+  const path = new Path2D();
+  const left: number[] = [];
+  const right: number[] = [];
+  for (let z = -HALF; z <= HALF; z += 2) {
+    const cx = streamX(z);
+    const lvl = waterLevel(z);
+    const edge = (side: number) => {
+      let o = 0;
+      while (o < 14 && groundHeight(cx + side * o, z) < lvl) o += 0.25;
+      return Math.max(1.2, o);
+    };
+    left.push(cx - edge(-1), z);
+    right.push(cx + edge(1), z);
+  }
+  path.moveTo(left[0], left[1]);
+  for (let k = 2; k < left.length; k += 2) path.lineTo(left[k], left[k + 1]);
+  for (let k = right.length - 2; k >= 0; k -= 2) path.lineTo(right[k], right[k + 1]);
+  path.closePath();
+  for (const b of brooks()) {
+    const n = b.x.length;
+    const l: number[] = [];
+    const r: number[] = [];
+    for (let k = 0; k < n; k++) {
+      const k0 = Math.max(0, k - 1);
+      const k1 = Math.min(n - 1, k + 1);
+      let tx = b.x[k1] - b.x[k0];
+      let tz = b.z[k1] - b.z[k0];
+      const len = Math.hypot(tx, tz) || 1;
+      tx /= len;
+      tz /= len;
+      const w = Math.max(0.6, b.width[k]);
+      l.push(b.x[k] - tz * w, b.z[k] + tx * w);
+      r.push(b.x[k] + tz * w, b.z[k] - tx * w);
+    }
+    path.moveTo(l[0], l[1]);
+    for (let k = 2; k < l.length; k += 2) path.lineTo(l[k], l[k + 1]);
+    for (let k = r.length - 2; k >= 0; k -= 2) path.lineTo(r[k], r[k + 1]);
+    path.closePath();
+  }
+  return path;
+}
+
+interface WorldArt {
+  relief: HTMLCanvasElement;
+  water: Path2D;
+  thin: Path2D;
+  thick: Path2D;
+}
+
+// Draws the world with the context already set up in world metres; k = pixels per metre.
+function drawWorld(ctx: CanvasRenderingContext2D, art: WorldArt, k: number) {
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(art.relief, -HALF, -HALF, HALF * 2, HALF * 2);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(60, 50, 30, 0.28)';
+  ctx.lineWidth = 0.8 / k;
+  ctx.stroke(art.thin);
+  ctx.strokeStyle = 'rgba(60, 50, 30, 0.45)';
+  ctx.lineWidth = 1.4 / k;
+  ctx.stroke(art.thick);
+  ctx.fillStyle = 'rgb(86, 156, 200)';
+  ctx.fill(art.water);
+  ctx.strokeStyle = 'rgba(40, 100, 150, 0.6)';
+  ctx.lineWidth = 0.8 / k;
+  ctx.stroke(art.water);
+}
+
+// The whole world drawn once at 2 px per metre, for the minimap.
+function paintWorld(art: WorldArt) {
+  const canvas = document.createElement('canvas');
+  const k = 2;
+  canvas.width = canvas.height = HALF * 2 * k;
+  const ctx = canvas.getContext('2d')!;
+  ctx.setTransform(k, 0, 0, k, HALF * k, HALF * k);
+  drawWorld(ctx, art, k);
   return canvas;
 }
 
@@ -140,7 +251,11 @@ export interface MapHandlers {
 }
 
 export function createMap(h: MapHandlers) {
-  const world = paintWorld();
+  const m = (HALF * 2) / GRID;
+  const heights = new Float32Array(GRID * GRID);
+  for (let j = 0; j < GRID; j++) for (let i = 0; i < GRID; i++) heights[j * GRID + i] = groundHeight(-HALF + (i + 0.5) * m, -HALF + (j + 0.5) * m);
+  const art: WorldArt = { relief: paintRelief(heights), water: waterPath(), ...contours(heights) };
+  const world = paintWorld(art);
   const pins = loadPins();
   let nextId = pins.reduce((a, p) => Math.max(a, p.id), 0) + 1;
 
@@ -226,10 +341,11 @@ export function createMap(h: MapHandlers) {
     const dpr = canvas.width / canvas.getBoundingClientRect().width || 1;
     ctx.fillStyle = '#18201a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const [x0, y0] = toScreen(-HALF, -HALF);
-    const size = HALF * 2 * base * zoom;
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(world, x0, y0, size, size);
+    const k = base * zoom;
+    ctx.save();
+    ctx.setTransform(k, 0, 0, k, canvas.width / 2 - cx * k, canvas.height / 2 - cz * k);
+    drawWorld(ctx, art, k);
+    ctx.restore();
     // A compass rose in the corner: north is up on this map.
     ctx.save();
     ctx.translate(canvas.width - 40 * dpr, 40 * dpr);

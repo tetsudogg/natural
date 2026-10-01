@@ -149,6 +149,7 @@ export interface BrookFall {
   dirX: number; // direction the water flows (downstream)
   dirZ: number;
   width: number;
+  at: number; // sample index at the top of the fall
 }
 
 export interface Brook {
@@ -195,6 +196,9 @@ function buildBrook(def: BrookDef): Brook {
     low = Math.min(low, raw[i]);
     smooth[i] = low;
   }
+  // Where the hillside has a cliff, the brook has cut a notch into it: the bed never
+  // climbs more than a metre per metre, so the ravine deepens into a short gorge instead.
+  for (let i = 1; i < n; i++) smooth[i] = Math.min(smooth[i], smooth[i - 1] + 1);
   // A mountain brook climbs untidily: long reaches of steep riffle and cascade over
   // cobbles where the bed hugs the hillside, flatter gravel runs, and now and then a
   // rock step the water drops over. Steps come at uneven spacing, mostly small, a few
@@ -209,8 +213,48 @@ function buildBrook(def: BrookDef): Brook {
   const nextStep = () => stepMax * (0.45 + 2.6 * rnd() ** 2) * (rnd() < 0.12 ? 1.7 : 1);
   let next = nextStep();
   const stepAt: number[] = [];
+  // The bigger brooks each have one showpiece: a 3 to 5 m fall. Below it the bed runs
+  // almost level (the fall takes the height), opening into a wide, deep pool.
+  const bigFrom = size >= 1 ? Math.floor(n * (0.28 + 0.2 * rnd())) : Infinity;
+  const bigH = 3.2 + rnd() * 1.8;
+  let bigAt = -1;
+  let bigTarget = -1;
+  // Chutes drop a third of a metre per metre, but just above the big fall the water
+  // already slides down steep rock, so leave that alone.
+  const chuteSlope = (j: number) => (bigAt >= 0 && j - bigAt <= 16 ? 1.05 : 0.32);
   for (let i = 0; i < n; i++) {
     const excess = smooth[i] - level;
+    if (i === bigFrom) {
+      // Pick the spot: 3 to 5.5 m above the run, with the gentlest ground above it.
+      let best = -1;
+      let bestG = Infinity;
+      for (let j = i + 4; j < Math.min(n - 10, i + 70); j++) {
+        const e = smooth[j] - level;
+        if (e < 3 || e > 5.5) continue;
+        const g = Math.max(smooth[j + 6] - smooth[j], (smooth[j + 10] - smooth[j]) * 0.6) + Math.abs(e - bigH) * 0.5;
+        if (g < bestG) {
+          bestG = g;
+          best = j;
+        }
+      }
+      bigTarget = best;
+    }
+    if (bigAt < 0 && i >= bigFrom && bigTarget > 0) {
+      if (i >= bigTarget) {
+        level = smooth[i];
+        bed[i] = level;
+        stepAt.push(i);
+        bigAt = i;
+        next = nextStep();
+      } else bed[i] = Math.max(bed[i - 1], level + excess * 0.04);
+      continue;
+    }
+    if (bigAt >= 0 && i - bigAt <= 10) {
+      // Just above the big fall the water slides steeply down bare rock to the lip.
+      level = smooth[i];
+      bed[i] = Math.max(bed[i - 1], level);
+      continue;
+    }
     // How closely the bed follows the hillside: riffles hug it, runs lag behind it.
     const follow = 0.15 + 0.8 * smoothstep(0.35, 0.65, fbm(i * 0.045, def.seed + 11, 2));
     if (excess > next && i > 6) {
@@ -225,7 +269,7 @@ function buildBrook(def: BrookDef): Brook {
         let j = i - 1;
         const end = i - 2 - Math.floor(rnd() * 5);
         // (and keep going while the fall left over would be taller than a couple of metres)
-        for (; j > 6 && (j >= end || bed[j] < bed[j + 1] - 2) && bed[j] < bed[j + 1] - 0.32; j--) bed[j] = bed[j + 1] - 0.32;
+        for (; j > Math.max(6, bigAt) && (j >= end || bed[j] < bed[j + 1] - 2) && bed[j] < bed[j + 1] - chuteSlope(j); j--) bed[j] = bed[j + 1] - chuteSlope(j);
         if (bed[j + 1] - bed[j] > 0.35) stepAt.push(j + 1);
       } else stepAt.push(i);
       next = nextStep();
@@ -239,21 +283,33 @@ function buildBrook(def: BrookDef): Brook {
     const drop = water[k] - water[k - 1];
     if (drop < 0.35) continue;
     // The lip is a rock ledge, rarely square across the channel.
-    const skew = (rnd() - 0.5) * 0.8;
+    const big = k === bigAt;
+    const skew = (rnd() - 0.5) * (big ? 0.3 : 0.8);
     const cx = xs[k - 1] - xs[k];
     const cz = zs[k - 1] - zs[k];
     const dx = cx * Math.cos(skew) - cz * Math.sin(skew);
     const dz = cx * Math.sin(skew) + cz * Math.cos(skew);
     const l = Math.hypot(dx, dz) || 1;
     falls.push({
+      at: k,
       x: (xs[k] + xs[k - 1]) / 2,
       z: (zs[k] + zs[k - 1]) / 2,
       top: water[k],
       bottom: water[k - 1],
       dirX: dx / l,
       dirZ: dz / l,
-      width: width[k] * (0.35 + 0.5 * rnd()),
+      width: big ? Math.max(1.1, width[k]) * (0.8 + 0.25 * rnd()) : width[k] * (0.35 + 0.5 * rnd()),
     });
+    if (big) {
+      // The big pool: wide and chest deep under the fall, shelving to gravel downstream.
+      for (let j = Math.max(1, k - 12); j < k; j++) {
+        const t = (j - (k - 12)) / 12; // 0 downstream end .. 1 at the fall
+        const bell = Math.sin(Math.min(1, t * 1.15) * Math.PI * 0.5) * (1 - smoothstep(0.9, 1, t) * 0.25);
+        width[j] = Math.max(width[j], 1 + 3.2 * bell);
+        bed[j] -= 0.9 * smoothstep(0.2, 0.85, t);
+      }
+      continue;
+    }
     // A small plunge pool, only knee deep, just below the fall.
     for (let j = Math.max(1, k - 4); j < k; j++) {
       const t = (j - (k - 4)) / 4;

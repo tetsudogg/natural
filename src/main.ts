@@ -15,6 +15,8 @@ import { Soundscape } from './audio';
 import { isTouchDevice, setupTouch } from './touch';
 import { clearings } from './world';
 import { createMap } from './map';
+import { createCritters } from './critters';
+import { waterSurfaceAt } from './terrain';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -103,6 +105,8 @@ async function main() {
   scene.add(fireflies.points);
   const wildlife = createWildlife();
   scene.add(wildlife.group);
+  const critters = createCritters();
+  scene.add(critters.group);
   const clouds = createClouds();
   scene.add(clouds.mesh);
 
@@ -141,7 +145,7 @@ async function main() {
   player.blocker = (x, z) => tent.blocks(x, z);
   tent.avoid = () => campfire.clearing;
   // ?debug exposes the game objects for automated checks.
-  if (new URLSearchParams(location.search).has('debug')) Object.assign(window, { natural: { tent, campfire, player, floor } });
+  if (new URLSearchParams(location.search).has('debug')) Object.assign(window, { natural: { tent, campfire, player, floor, critters } });
   const nearTent = (x: number, z: number) => {
     const t = tent.clearing;
     return !!t && Math.hypot(t.x - x, t.z - z) < 3.2;
@@ -153,7 +157,15 @@ async function main() {
   }
 
   const sound = new Soundscape();
-  player.onStep = (ground, running) => sound.footstep(ground, running);
+  player.onStep = (ground, running) => {
+    sound.footstep(ground, running);
+    if (ground !== 'water') return;
+    // Splash just ahead of where the body is, where the foot comes down.
+    const fx = player.position.x - Math.sin(player.yaw) * 0.35;
+    const fz = player.position.z - Math.cos(player.yaw) * 0.35;
+    const surf = waterSurfaceAt(fx, fz) ?? waterSurfaceAt(player.position.x, player.position.z);
+    if (surf !== null) critters.splash(fx, surf, fz, running ? 1 : 0.5);
+  };
 
   // Warm up shaders so the first frame after "start" does not stutter.
   sky.update(hour, player.position);
@@ -484,6 +496,7 @@ async function main() {
     brookWater.update(elapsed, day.sunDir, day.sunColor, day.sunIntensity, day.daylight, day.fogColor);
     fireflies.update(elapsed, day.night);
     wildlife.update(elapsed, dt, day.daylight, player.position, camera);
+    critters.update(elapsed, dt, player.position, day.daylight);
     clouds.update(elapsed, player.position, day.sunDir, day.sunColor, day.daylight, day.night, day.fogColor);
     campfire.update(elapsed, dt, dt * TIME_SPEEDS[speedIndex].hoursPerSecond, camera, windUniforms.uWind.value, day.daylight);
     tent.update(elapsed, dt, player, windUniforms.uWind.value, day.night);

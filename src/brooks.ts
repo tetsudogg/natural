@@ -96,12 +96,15 @@ const fallVert = /* glsl */ `
   varying vec2 vUv;
   varying float vLayer;
   varying float vEdge;
+  varying float vH;
   attribute vec2 layer;
+  attribute float height;
   #include <fog_pars_vertex>
   void main() {
     vUv = uv;
     vLayer = layer.x;
     vEdge = layer.y;
+    vH = height;
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * mvPosition;
     #include <fog_vertex>
@@ -109,6 +112,7 @@ const fallVert = /* glsl */ `
 `;
 
 // uv.x across the curtain (scaled to metres), uv.y down it in metres.
+// layer.x: 0 the core sheet, 1 the wider veil behind it; layer.y: -1..1 across.
 const fallFrag = /* glsl */ `
   uniform float uTime;
   uniform float uLight;
@@ -117,30 +121,121 @@ const fallFrag = /* glsl */ `
   varying vec2 vUv;
   varying float vLayer;
   varying float vEdge;
+  varying float vH;
   #include <common>
   ${NOISE}
   #include <fog_pars_fragment>
   void main() {
     float y = vUv.y;
-    float speed = 2.5 + sqrt(y) * 2.5;
-    // The sheet splits into ropes of water between the stones of the lip: bands across
-    // the fall that barely drift, each full of fast streaks and bubbles running down.
-    float band = vnoise(vec2(vUv.x * 5.0 + vLayer * 7.0, y * 0.35 + 3.0)) * 0.7 + vnoise(vec2(vUv.x * 13.0 - vLayer * 3.0, y * 0.6)) * 0.3;
-    float rope = smoothstep(0.38, 0.62, band);
-    vec2 p = vec2(vUv.x * 26.0 + vLayer * 17.0, y * 3.0 - uTime * speed);
-    float streak = vnoise(p) * 0.6 + vnoise(p * vec2(2.1, 1.7) + 3.0) * 0.4;
-    float white = smoothstep(0.35, 0.8, streak * 0.8 + y * 0.35 + rope * 0.2);
-    // Right at the lip the water is still glassy and green; it whitens as it falls.
-    float glass = 1.0 - smoothstep(0.0, 0.3, y);
-    float edge = 1.0 - smoothstep(0.5, 1.0, abs(vEdge) + (band - 0.5) * 0.6);
-    vec3 foamCol = vec3(0.93, 0.96, 0.97) * (uLight * 0.9 + 0.04) + uSunColor * 0.05;
-    vec3 col = mix(uTint * uLight, foamCol, clamp(white * (1.0 - glass * 0.7), 0.0, 1.0));
-    float a = mix(0.12, 0.35, glass) + rope * mix(0.25, 0.75, white) * (1.0 - glass * 0.5);
-    a *= mix(1.0, 0.5, vLayer) * edge;
+    float x = vUv.x + vLayer * 3.7;
+    // Water speeds up as it falls (v = sqrt(2 g h)), so its texture streams faster below.
+    float speed = 1.6 + sqrt(y) * 4.4;
+    float fy = y * 1.2 - uTime * speed;
+    // Ropes: where the lip lets more water through. They wander slowly across the fall.
+    float band = vnoise(vec2(x * 3.2 + uTime * 0.07, y * 0.25 + 2.0)) * 0.65 + vnoise(vec2(x * 8.0, y * 0.5 - uTime * 0.1)) * 0.35;
+    float rope = smoothstep(0.3, 0.7, band);
+    // Long, fine streaks running down, and lumps of aerated water tumbling in them.
+    float fine = vnoise(vec2(x * 46.0, fy * 0.9)) * 0.5 + vnoise(vec2(x * 90.0 + 7.0, fy * 1.6)) * 0.3 + vnoise(vec2(x * 20.0, fy * 0.5)) * 0.2;
+    float lumps = vnoise(vec2(x * 9.0, fy * 2.2)) * vnoise(vec2(x * 4.0 + 3.0, fy * 1.1 + 5.0));
+    // Glassy and green at the lip, turning white as air gets into it.
+    float glass = 1.0 - smoothstep(0.0, 0.25 + 0.1 * vH, y);
+    float aer = clamp(smoothstep(0.0, 0.9, y) * 0.8 + rope * 0.3, 0.0, 1.0);
+    float white = clamp(smoothstep(0.32, 0.75, fine * (0.7 + aer * 0.6) + lumps * 0.5) * (0.35 + aer * 0.65), 0.0, 1.0);
+    white *= 1.0 - glass * 0.75;
+    // A tall fall comes apart toward the bottom: the sheet frays into falling drops.
+    float frayStart = 0.6 * vH;
+    float fray = smoothstep(frayStart, vH + 0.3, y) * step(2.0, vH);
+    float drops = smoothstep(0.45 + fray * 0.3, 0.75 + fray * 0.2, vnoise(vec2(x * 30.0, fy * 2.5)) * 0.6 + vnoise(vec2(x * 70.0, fy * 4.0)) * 0.4 + 0.25);
+    float coverage = mix(1.0, drops, fray * (1.0 - rope * 0.5));
+    // Ragged sides.
+    float edge = 1.0 - smoothstep(0.55, 1.0, abs(vEdge) + (band - 0.5) * 0.5 + (fine - 0.5) * 0.25);
+
+    vec3 water = uTint * (0.55 + 0.45 * rope) * uLight;
+    vec3 foamCol = vec3(0.95, 0.97, 0.98) * (uLight * 0.92 + 0.04) + uSunColor * 0.08;
+    // The lip catches the sky in a bright line.
+    float lipLine = smoothstep(0.08, 0.0, y) * 0.6;
+    vec3 col = mix(water, foamCol, white) + lipLine * uLight * 0.4;
+    float a = mix(0.18, 0.45, glass) * (0.6 + rope * 0.6) + white * mix(0.55, 0.92, rope);
+    a = clamp(a, 0.0, 0.95) * coverage * edge * mix(1.0, 0.45, vLayer);
     gl_FragColor = vec4(col, a);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #include <fog_fragment>
+  }
+`;
+
+// Spray thrown up where the water hits the pool: bright drops on short arcs.
+// Churned white water where a fall lands: boiling foam that spreads and fades.
+const boilVert = /* glsl */ `
+  attribute float strength;
+  varying vec2 vUv;
+  varying float vStrength;
+  #include <fog_pars_vertex>
+  void main() {
+    vUv = uv;
+    vStrength = strength;
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * mvPosition;
+    #include <fog_vertex>
+  }
+`;
+const boilFrag = /* glsl */ `
+  uniform float uTime;
+  uniform float uLight;
+  varying vec2 vUv;
+  varying float vStrength;
+  #include <common>
+  ${NOISE}
+  #include <fog_pars_fragment>
+  void main() {
+    vec2 c = (vUv - 0.5) * 2.0;
+    float r = length(c);
+    // Foam pushed outward from the impact, broken into curds.
+    float t = uTime * 0.6;
+    vec2 q = c * 4.0;
+    float n = vnoise(q * 1.3 + vec2(t, -t * 0.7)) * 0.5 + vnoise(q * 3.1 - vec2(t * 1.6, t)) * 0.3 + vnoise(vec2(r * 9.0 - uTime * 2.2, atan(c.y, c.x) * 3.0)) * 0.35;
+    float core = 1.0 - smoothstep(0.0, 0.55, r);
+    float field = (1.0 - smoothstep(0.35, 1.0, r)) * smoothstep(0.35 - core * 0.3, 0.7, n + core * 0.4);
+    float a = clamp(field * (0.55 + 0.45 * vStrength) + core * 0.35 * vStrength, 0.0, 0.92);
+    gl_FragColor = vec4(vec3(0.94, 0.97, 0.98) * (uLight * 0.9 + 0.05), a);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    #include <fog_fragment>
+  }
+`;
+
+const sprayVert = /* glsl */ `
+  attribute vec4 seed; // phase, angle, speed, size
+  attribute vec3 dir; // the fall's downstream direction (xz) and its height
+  uniform float uTime;
+  varying float vAlpha;
+  void main() {
+    float H = dir.z;
+    float rate = 0.9 + seed.x * 0.6;
+    float life = fract(uTime * rate + seed.x * 7.0);
+    float t = life * (0.5 + 0.3 * sqrt(H));
+    float a = seed.y;
+    vec2 out2 = vec2(cos(a), sin(a)) * 0.6 + dir.xy * 0.9;
+    float v = seed.z * (1.0 + 0.45 * sqrt(H));
+    vec3 p = position + vec3(out2.x * v * t, v * 1.1 * t - 4.9 * t * t, out2.y * v * t);
+    p.y = max(p.y, position.y - 0.05);
+    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+    gl_Position = projectionMatrix * mv;
+    vAlpha = (1.0 - life) * smoothstep(0.0, 0.08, life);
+    gl_PointSize = seed.w * 260.0 / -mv.z;
+  }
+`;
+
+const sprayFrag = /* glsl */ `
+  uniform float uLight;
+  varying float vAlpha;
+  void main() {
+    vec2 c = gl_PointCoord - 0.5;
+    float d = dot(c, c);
+    if (d > 0.25) discard;
+    float a = smoothstep(0.25, 0.05, d) * vAlpha * 0.8;
+    gl_FragColor = vec4(vec3(0.95, 0.97, 1.0) * (uLight * 0.9 + 0.05), a);
+    #include <colorspace_fragment>
   }
 `;
 
@@ -218,9 +313,10 @@ function ribbonGeometry() {
         speed.push(fast[k]);
       }
     }
+    const breaks = new Set(b.falls.map((f) => f.at - 1));
     for (let k = 0; k < n - 1; k++) {
-      // Each little fall gets its own sheet of water; the ribbon breaks there.
-      if (Math.abs(b.water[k + 1] - b.water[k]) > 0.35) continue;
+      // Each fall gets its own sheet of water; the ribbon breaks there.
+      if (breaks.has(k)) continue;
       for (let i = 0; i < ACROSS; i++) {
         const a = base + k * (ACROSS + 1) + i;
         const c = a + ACROSS + 1;
@@ -237,18 +333,22 @@ function ribbonGeometry() {
   return geo;
 }
 
-// A small fall: a sheet of white water pouring off the lip, sliding down the rock step
-// and leaping a little clear of it at the bottom. Two layers, the back one wider and fainter.
+// A fall: a sheet of water pouring off the lip. Small ones slide down the rock step and
+// leap a little clear at the bottom; big ones arc out over the pool in free fall.
+// Two layers, the back one a wider, fainter veil.
 function curtainGeometry(falls: BrookFall[]) {
   const pos: number[] = [];
   const uvs: number[] = [];
   const layer: number[] = [];
+  const height: number[] = [];
   const idx: number[] = [];
-  const ROWS = 14;
-  const COLS = 6;
   for (const f of falls) {
     const H = f.top - f.bottom;
-    const throwDist = Math.min(1.4, 0.7 + 0.25 * H);
+    const big = H > 2.5;
+    const ROWS = big ? 28 : 16;
+    const COLS = big ? 10 : 6;
+    // How far the water is thrown: a big fall leaves the lip at about 1.3 m/s.
+    const throwDist = big ? 1.3 * Math.sqrt((2 * H) / 9.8) + 0.2 : Math.min(1.4, 0.7 + 0.25 * H);
     const sx = -f.dirZ;
     const sz = f.dirX;
     // The lip sits half a metre upstream of the fall's midpoint.
@@ -256,19 +356,21 @@ function curtainGeometry(falls: BrookFall[]) {
     const lz = f.z - f.dirZ * 0.5;
     for (let L = 0; L < 2; L++) {
       const base = pos.length / 3;
-      const w0 = f.width * (L === 0 ? 1 : 1.15);
+      const w0 = f.width * (L === 0 ? 1 : 1.18);
       for (let r = 0; r <= ROWS; r++) {
         const t = r / ROWS;
         const drop = t * t * 0.3 + t * 0.7; // denser rows near the lip, where it curves
-        const out = 0.1 + throwDist * Math.sqrt(drop) * (L === 0 ? 1 : 1.1);
-        const w = w0 * (1 + drop * 0.3);
+        const out = 0.1 + throwDist * Math.sqrt(drop) * (L === 0 ? 1 : 0.92);
+        // A big fall spreads as it drops.
+        const w = w0 * (1 + drop * (big ? 0.45 : 0.3));
         for (let c = 0; c <= COLS; c++) {
           const s = (c / COLS - 0.5) * 2;
           // A slight bulge: the middle carries more water and throws further.
-          const bulge = (1 - s * s) * 0.06;
-          pos.push(lx + f.dirX * (out + bulge) + sx * s * w, f.top + 0.03 - drop * (H + 0.05), lz + f.dirZ * (out + bulge) + sz * s * w);
+          const bulge = (1 - s * s) * (big ? 0.15 : 0.06);
+          pos.push(lx + f.dirX * (out + bulge) + sx * s * w, f.top + 0.03 - drop * (H + 0.08), lz + f.dirZ * (out + bulge) + sz * s * w);
           uvs.push(s * w, drop * H);
           layer.push(L, s);
+          height.push(H);
         }
       }
       for (let r = 0; r < ROWS; r++) {
@@ -284,7 +386,65 @@ function curtainGeometry(falls: BrookFall[]) {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setAttribute('layer', new THREE.Float32BufferAttribute(layer, 2));
+  geo.setAttribute('height', new THREE.Float32BufferAttribute(height, 1));
   geo.setIndex(idx);
+  return geo;
+}
+
+// Where each fall lands: the bottom of its sheet.
+function landing(f: BrookFall) {
+  const H = f.top - f.bottom;
+  const throwDist = H > 2.5 ? 1.3 * Math.sqrt((2 * H) / 9.8) + 0.2 : Math.min(1.4, 0.7 + 0.25 * H);
+  return { x: f.x + f.dirX * (throwDist - 0.4), z: f.z + f.dirZ * (throwDist - 0.4), H };
+}
+
+function boilGeometry(falls: BrookFall[]) {
+  const pos: number[] = [];
+  const uvs: number[] = [];
+  const str: number[] = [];
+  const idx: number[] = [];
+  for (const f of falls) {
+    const { x, z, H } = landing(f);
+    if (H < 0.5) continue;
+    const r = f.width * (1.1 + Math.min(1.5, H * 0.35));
+    const base = pos.length / 3;
+    const y = f.bottom + 0.015;
+    for (const [u, v] of [[0, 0], [1, 0], [1, 1], [0, 1]]) {
+      pos.push(x + (u - 0.5) * 2 * r, y, z + (v - 0.5) * 2 * r);
+      uvs.push(u, v);
+      str.push(Math.min(1, H / 3));
+    }
+    idx.push(base, base + 2, base + 1, base, base + 3, base + 2);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setAttribute('strength', new THREE.Float32BufferAttribute(str, 1));
+  geo.setIndex(idx);
+  return geo;
+}
+
+function sprayGeometry(falls: BrookFall[]) {
+  const rnd = mulberry32(57);
+  const pos: number[] = [];
+  const seed: number[] = [];
+  const dir: number[] = [];
+  for (const f of falls) {
+    const { x, z, H } = landing(f);
+    const count = Math.round(f.width * (10 + H * 22));
+    const sx = -f.dirZ;
+    const sz = f.dirX;
+    for (let i = 0; i < count; i++) {
+      const o = (rnd() * 2 - 1) * f.width * 1.1;
+      pos.push(x + sx * o + (rnd() - 0.5) * 0.3, f.bottom + 0.02, z + sz * o + (rnd() - 0.5) * 0.3);
+      seed.push(rnd(), rnd() * Math.PI * 2, 0.6 + rnd() * 1.6, 0.025 + rnd() * 0.04 + (H > 2.5 ? 0.02 : 0));
+      dir.push(f.dirX, f.dirZ, H);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('seed', new THREE.Float32BufferAttribute(seed, 4));
+  geo.setAttribute('dir', new THREE.Float32BufferAttribute(dir, 3));
   return geo;
 }
 
@@ -294,16 +454,16 @@ function mistGeometry(falls: BrookFall[]) {
   const phase: number[] = [];
   const size: number[] = [];
   for (const f of falls) {
-    const H = f.top - f.bottom;
-    if (H < 1.2) continue;
-    const count = Math.round(H * 4);
-    const reach = Math.min(1.4, 0.7 + 0.25 * H) + 0.1;
+    const { x, z, H } = landing(f);
+    if (H < 1) continue;
+    // Big falls breathe out a cloud of spray that drifts over their pool.
+    const count = Math.round(H > 2.5 ? H * 14 : H * 4);
     for (let i = 0; i < count; i++) {
       const a = rnd() * Math.PI * 2;
-      const r = rnd() * f.width * 1.3;
-      pos.push(f.x + f.dirX * (reach - 0.5) + Math.cos(a) * r, f.bottom + 0.05, f.z + f.dirZ * (reach - 0.5) + Math.sin(a) * r);
+      const r = rnd() * f.width * (H > 2.5 ? 1.6 : 1.3);
+      pos.push(x + Math.cos(a) * r, f.bottom + 0.05, z + Math.sin(a) * r);
       phase.push(rnd());
-      size.push(0.6 + rnd() * 0.8 + H * 0.08);
+      size.push(0.6 + rnd() * 0.8 + H * (H > 2.5 ? 0.22 : 0.08));
     }
   }
   const geo = new THREE.BufferGeometry();
@@ -364,7 +524,7 @@ export function createBrooks() {
   group.add(curtains);
 
   const mistMat = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uLight: { value: 1 }, uAlpha: { value: 0.22 }, uMap: { value: glowTexture() } },
+    uniforms: { uTime: { value: 0 }, uLight: { value: 1 }, uAlpha: { value: 0.3 }, uMap: { value: glowTexture() } },
     vertexShader: mistVert,
     fragmentShader: mistFrag,
     transparent: true,
@@ -373,6 +533,31 @@ export function createBrooks() {
   const mist = new THREE.Points(mistGeometry(falls), mistMat);
   mist.renderOrder = 3;
   group.add(mist);
+
+  const boilMat = new THREE.ShaderMaterial({
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTime: { value: 0 }, uLight: { value: 1 } }]),
+    vertexShader: boilVert,
+    fragmentShader: boilFrag,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    fog: true,
+  });
+  const boil = new THREE.Mesh(boilGeometry(falls), boilMat);
+  boil.renderOrder = 2;
+  group.add(boil);
+
+  const sprayMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uLight: { value: 1 } },
+    vertexShader: sprayVert,
+    fragmentShader: sprayFrag,
+    transparent: true,
+    depthWrite: false,
+  });
+  const spray = new THREE.Points(sprayGeometry(falls), sprayMat);
+  spray.renderOrder = 3;
+  spray.frustumCulled = false;
+  group.add(spray);
 
   return {
     group,
@@ -388,6 +573,10 @@ export function createBrooks() {
       curtainMat.uniforms.uLight.value = light;
       curtainMat.uniforms.uSunColor.value.copy(sunColor).multiplyScalar(sunStrength);
       mistMat.uniforms.uTime.value = time;
+      sprayMat.uniforms.uTime.value = time;
+      boilMat.uniforms.uTime.value = time;
+      boilMat.uniforms.uLight.value = light;
+      sprayMat.uniforms.uLight.value = light;
       mistMat.uniforms.uLight.value = light;
     },
   };

@@ -1,7 +1,7 @@
 // Walking, looking around, and first/third person views.
 
 import * as THREE from 'three';
-import { groundHeight } from './terrain';
+import { groundHeight, waterSurfaceAt } from './terrain';
 import { WALK_LIMIT, waterDist, forestDensity } from './world';
 
 const EYE = 1.6;
@@ -25,7 +25,7 @@ export class Player {
   private camDist = 4.2;
   // Something solid (the tent) that can't be walked into.
   blocker: ((x: number, z: number) => boolean) | null = null;
-  onStep: ((ground: 'grass' | 'gravel' | 'forest', running: boolean) => void) | null = null;
+  onStep: ((ground: 'grass' | 'gravel' | 'forest' | 'water', running: boolean) => void) | null = null;
 
   constructor(x: number, z: number, yaw: number) {
     this.position.set(x, groundHeight(x, z), z);
@@ -99,7 +99,8 @@ export class Player {
       this.stepPhase += (dt * speed) / stride;
       if (Math.floor(prev) !== Math.floor(this.stepPhase) && this.onStep) {
         const d = waterDist(this.position.x, this.position.z);
-        const ground = d < 5.5 ? 'gravel' : forestDensity(this.position.x, this.position.z) > 0.5 ? 'forest' : 'grass';
+        const wet = waterSurfaceAt(this.position.x, this.position.z) !== null;
+        const ground = wet ? 'water' : d < 5.5 ? 'gravel' : forestDensity(this.position.x, this.position.z) > 0.5 ? 'forest' : 'grass';
         this.onStep(ground, running);
       }
     }

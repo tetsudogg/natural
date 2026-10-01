@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HALF, forestDensity, heightAt, waterDist } from './world';
+import { HALF, brookEdgeDist, forestDensity, heightAt, nearestBrook, streamDist, waterDist, waterLevel } from './world';
 import { fbm, lerp, smoothstep } from './noise';
 import { surface } from './textures';
 
@@ -214,4 +214,16 @@ export function groundSlope(x: number, z: number) {
   const dx = groundHeight(x + e, z) - groundHeight(x - e, z);
   const dz = groundHeight(x, z + e) - groundHeight(x, z - e);
   return Math.hypot(dx, dz) / (2 * e);
+}
+
+// The water surface at (x, z) if this spot is under water (the stream or a brook),
+// otherwise null.
+export function waterSurfaceAt(x: number, z: number): number | null {
+  const g = groundHeight(x, z);
+  if (streamDist(x, z) < 16 && waterLevel(z) > g + 0.02) return waterLevel(z);
+  if (brookEdgeDist(x, z) < 0.3) {
+    const b = nearestBrook(x, z);
+    if (b && b.water > g + 0.02) return b.water;
+  }
+  return null;
 }

@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { streamX, waterLevel, WATERFALL_Z, HALF, brooks, nearestBrook } from './world';
 
-type Ground = 'grass' | 'gravel' | 'forest';
+type Ground = 'grass' | 'gravel' | 'forest' | 'water';
 
 export class Soundscape {
   private ctx: AudioContext | null = null;
@@ -259,6 +259,10 @@ export class Soundscape {
   footstep(ground: Ground, running: boolean) {
     const ctx = this.ctx;
     if (!ctx) return;
+    if (ground === 'water') {
+      this.wade(running);
+      return;
+    }
     const src = ctx.createBufferSource();
     src.buffer = this.noise;
     const f = this.filter('bandpass', ground === 'gravel' ? 2600 : ground === 'forest' ? 1500 : 900, ground === 'gravel' ? 1.5 : 0.8);
@@ -270,6 +274,42 @@ export class Soundscape {
     g.gain.exponentialRampToValueAtTime(0.001, t + (ground === 'gravel' ? 0.16 : 0.12));
     src.connect(f).connect(g).connect(this.master);
     src.start(t, Math.random() * 3, 0.2);
+  }
+
+  // Wading: a splash as the foot breaks the surface, the slosh of water pushed aside,
+  // and a few drops pattering back down.
+  private wade(running: boolean) {
+    const ctx = this.ctx!;
+    const t = ctx.currentTime;
+    const loud = running ? 1.35 : 1;
+    const burst = (type: BiquadFilterType, freq: number, q: number, vol: number, attack: number, decay: number, at: number) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t + at);
+      g.gain.linearRampToValueAtTime(vol * loud, t + at + attack);
+      g.gain.exponentialRampToValueAtTime(0.001, t + at + attack + decay);
+      src.connect(this.filter(type, freq, q)).connect(g).connect(this.master);
+      src.start(t + at, Math.random() * 3, attack + decay + 0.05);
+    };
+    burst('bandpass', 1300 + Math.random() * 600, 0.7, 0.5, 0.008, 0.2, 0);
+    burst('bandpass', 3800, 0.9, 0.16, 0.004, 0.09, 0.01);
+    burst('lowpass', 520, 0.6, 0.32, 0.05, 0.3, 0.02);
+    const drops = 3 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < drops; i++) {
+      const at = 0.08 + Math.random() * 0.3;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      const f0 = 700 + Math.random() * 1100;
+      osc.frequency.setValueAtTime(f0, t + at);
+      osc.frequency.exponentialRampToValueAtTime(f0 * 1.7, t + at + 0.035);
+      g.gain.setValueAtTime(0, t + at);
+      g.gain.linearRampToValueAtTime((0.03 + Math.random() * 0.05) * loud, t + at + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.001, t + at + 0.05);
+      osc.connect(g).connect(this.master);
+      osc.start(t + at);
+      osc.stop(t + at + 0.07);
+    }
   }
 
   // A burning campfire: a low breathy roar plus random crackles and pops.
