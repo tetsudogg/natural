@@ -132,8 +132,10 @@ async function main() {
   }
   applyQuality();
   const home = clearings[0];
-  const player = new Player(saved?.x ?? home.x - 6, saved?.z ?? home.z, saved?.yaw ?? Math.PI / 2 - 0.35);
-  player.pitch = saved?.pitch ?? -0.05;
+  // Every visit starts by the central stream; ?resume picks up where you left off (for testing).
+  const resume = new URLSearchParams(location.search).has('resume') ? saved : null;
+  const player = new Player(resume?.x ?? home.x - 6, resume?.z ?? home.z, resume?.yaw ?? Math.PI / 2 - 0.35);
+  player.pitch = resume?.pitch ?? -0.05;
   player.setView(saved?.view ?? 'first');
   scene.add(player.body);
 
@@ -149,7 +151,12 @@ async function main() {
   player.blocker = (x, z) => {
     if (tent.blocks(x, z)) return true;
     const surf = waterSurfaceAt(x, z);
-    return surf !== null && surf - groundHeight(x, z) > 0.9;
+    if (surf === null) return false;
+    const depth = surf - groundHeight(x, z);
+    // Never stuck: from deep water (a jump to a pin), any step that isn't deeper is allowed.
+    const here = waterSurfaceAt(player.position.x, player.position.z);
+    const hereDepth = here === null ? 0 : here - groundHeight(player.position.x, player.position.z);
+    return depth > 0.9 && depth > hereDepth;
   };
   tent.avoid = () => campfire.clearing;
   // ?debug exposes the game objects for automated checks.

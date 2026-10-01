@@ -54,8 +54,8 @@ const frag = /* glsl */ `
     if (vDepth < -0.05) discard;
     vec2 p = vWorldPos.xz;
     // Mostly glassy; now and then a breath of wind roughens a patch that drifts across.
-    float gust = smoothstep(0.55, 0.8, vnoise(p * 0.012 + vec2(uTime * 0.02, -uTime * 0.013)));
-    float amp = 0.012 + gust * 0.06;
+    float gust = smoothstep(0.62, 0.88, vnoise(p * 0.012 + vec2(uTime * 0.02, -uTime * 0.013)));
+    float amp = 0.008 + gust * 0.045;
     vec3 n1 = texture2D(tNormal, p * 0.05 + vec2(uTime * 0.004, uTime * 0.003)).xyz * 2.0 - 1.0;
     vec3 n2 = texture2D(tNormal, p * 0.13 - vec2(uTime * 0.006, -uTime * 0.005)).xyz * 2.0 - 1.0;
     vec3 n = normalize(vec3((n1.x + n2.x * 0.6) * amp, 1.0, (n1.y + n2.y * 0.6) * amp));
@@ -78,14 +78,15 @@ const frag = /* glsl */ `
     // Turquoise over the pale gravel of the shallows, deep blue-green further out.
     float d = clamp(vDepth / 4.0, 0.0, 1.0);
     vec3 body = mix(uShallow, uDeep, smoothstep(0.0, 1.0, d)) * uLight;
-    // Calm water reflects strongly; even looking down you see the mountains in it.
-    float r = clamp(0.3 + fresnel * 0.7, 0.0, 1.0);
+    // Calm water mirrors strongly, even over the shallows and looking down: the pebbles
+    // show faintly through the mountains' reflection.
+    float r = max(fresnel, mix(0.6, 0.9, smoothstep(0.05, 1.5, vDepth)));
     vec3 col = mix(body, refl * 0.92, r);
     vec3 h = normalize(uSunDir + view);
     col += uSunColor * pow(max(dot(n, h), 0.0), 600.0) * 4.0;
     // The water's edge: clear enough to see the bottom.
     float alpha = mix(0.25, 1.0, smoothstep(0.0, 1.6, vDepth)) * (0.75 + 0.25 * r);
-    alpha = max(alpha, fresnel);
+    alpha = max(alpha, max(fresnel, r * 0.85));
     alpha *= smoothstep(-0.05, 0.12, vDepth);
     gl_FragColor = vec4(col, alpha);
     #include <tonemapping_fragment>
