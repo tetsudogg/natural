@@ -144,7 +144,8 @@ kbd {
   bottom: 14px;
   margin: 0 auto;
   width: fit-content;
-  max-width: calc(100vw - 32px);
+  /* Leaves room for the clock on the left. */
+  max-width: calc(100vw - 2 * 100px);
   font-size: 12px;
   line-height: 1.9;
   text-align: center;
@@ -163,6 +164,28 @@ kbd {
 
 .help.off {
   opacity: 0;
+}
+
+/* The time of day in the game, bottom-left, in the same quiet style as the key guide. */
+#clock {
+  position: fixed;
+  left: 16px;
+  bottom: 14px;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  line-height: 1.9;
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(10, 14, 10, 0.22);
+  border-radius: 10px;
+  padding: 2px 12px;
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+body.touch #clock {
+  top: calc(12px + env(safe-area-inset-top));
+  bottom: auto;
 }
 
 /* Minimap: a see-through disc in the bottom-right corner, heading up, with a compass. */

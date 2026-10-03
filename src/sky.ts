@@ -27,10 +27,21 @@ export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
   const sky = new Sky();
   sky.scale.setScalar(3500);
   const u = sky.material.uniforms;
-  u.turbidity.value = 3;
-  u.rayleigh.value = 2;
-  u.mieCoefficient.value = 0.004;
+  // Clear mountain air: a deep blue overhead, paling only near the horizon.
+  u.turbidity.value = 1.6;
+  u.rayleigh.value = 3.2;
+  u.mieCoefficient.value = 0.0025;
   u.mieDirectionalG.value = 0.8;
+  // Our own cloud layer (atmosphere.ts) drifts overhead; the sky's built-in veil of cloud
+  // only washed it out to white.
+  u.cloudCoverage.value = 0;
+  // The physical sky reads washed-out once tone mapped; deepen its blue a little.
+  sky.material.fragmentShader = sky.material.fragmentShader.replace(
+    'gl_FragColor = vec4( texColor, 1.0 );',
+    `float skyL = dot( texColor, vec3( 0.2126, 0.7152, 0.0722 ) );
+    texColor = max( mix( vec3( skyL ), texColor, 1.5 ), 0.0 ) * 0.42;
+    gl_FragColor = vec4( texColor, 1.0 );`,
+  );
   scene.add(sky);
 
   // A second sky in its own scene, used to light the world by reflection.

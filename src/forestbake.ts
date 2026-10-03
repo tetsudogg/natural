@@ -1,6 +1,6 @@
 // Forest seen from afar, baked once at start-up from the same conifers that stand on the
-// pond's shores: a tile of crowns from above and a tile of a wooded slope from the side.
-// The far terrain wears these instead of thousands of real trees.
+// pond's shores: a tile of crowns seen from above. The far terrain wears it instead of
+// thousands of real trees.
 
 import * as THREE from 'three';
 import { coniferGeometry } from './pond';
@@ -98,14 +98,7 @@ export function bakeForest(renderer: THREE.WebGLRenderer) {
   topCam.lookAt(0, 0, 0);
   const top = bake(topCam, trees.length, (t, ox, oy) => new THREE.Vector3(t.x + ox * T, 0, -(t.y + oy * T)));
 
-  // From the side: a wooded 45° slope, rows of trees climbing behind one another.
-  const sideCam = new THREE.OrthographicCamera(0, T, T, 0, 0.1, 400);
-  sideCam.position.set(0, 0, 200);
-  sideCam.lookAt(0, 0, 0);
-  // Seen side-on the crowns overlap far more, so fewer trees keep their spires readable.
-  const side = bake(sideCam, 150, (t, ox, oy) => new THREE.Vector3(t.x + ox * T, t.y + oy * T - 6, -(t.y + oy * T)));
-
   kinds.forEach((g) => g.dispose());
   mat.dispose();
-  return { top, side };
+  return { top };
 }

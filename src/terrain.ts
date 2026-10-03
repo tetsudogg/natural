@@ -16,10 +16,9 @@ const ROCK = srgb(0.4, 0.39, 0.36);
 const FAR_FOREST = srgb(0.1, 0.24, 0.07);
 const tmpC = new THREE.Color();
 // Filled in by bakeForest once the renderer exists.
-const forestUniforms = { top: { value: null as THREE.Texture | null }, side: { value: null as THREE.Texture | null } };
-export function setForestTextures(top: THREE.Texture, side: THREE.Texture) {
+const forestUniforms = { top: { value: null as THREE.Texture | null } };
+export function setForestTexture(top: THREE.Texture) {
   forestUniforms.top.value = top;
-  forestUniforms.side.value = side;
 }
 const FAR_ROCK = srgb(0.42, 0.42, 0.44);
 const SNOW = srgb(0.92, 0.94, 0.97);
@@ -35,7 +34,7 @@ function colorAt(x: number, y: number, z: number, slope: number, out: THREE.Colo
   out.lerp(far ? MUD : GRAVEL, 1 - smoothstep(3.2, 5.2, d));
   out.lerp(ROCK, smoothstep(0.55, 0.95, slope));
   if (far) {
-    const edge = smoothstep(HALF, HALF + 200, Math.max(Math.abs(x), Math.abs(z)));
+    const edge = smoothstep(HALF - 30, HALF + 40, Math.max(Math.abs(x), Math.abs(z)));
     // Forest canopy from afar: dark, mottled by stands of lighter larch and deeper spruce.
     const stand = fbm(x * 0.018 - 11, z * 0.018 + 6, 3);
     tmpC.copy(FAR_FOREST).multiplyScalar(0.7 + 0.6 * stand);
@@ -193,11 +192,10 @@ export function createTerrain() {
   main.receiveShadow = true;
 
   const farMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
-  // From afar the forest wears the baked tiles of real crowns (forestbake.ts): seen from
-  // above on gentle ground, from the side on steep slopes.
+  // From afar the forest wears the baked tile of real crowns (forestbake.ts), projected
+  // from all three axes so no slope stretches it.
   farMat.onBeforeCompile = (shader) => {
     shader.uniforms.tForestTop = forestUniforms.top;
-    shader.uniforms.tForestSide = forestUniforms.side;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vFarW;\nvarying vec3 vFarN;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFarW = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvFarN = normalize(mat3(modelMatrix) * objectNormal);');
@@ -208,7 +206,7 @@ export function createTerrain() {
         varying vec3 vFarW;
         varying vec3 vFarN;
         uniform sampler2D tForestTop;
-        uniform sampler2D tForestSide;`,
+`,
       )
       .replace(
         '#include <color_fragment>',
@@ -218,10 +216,11 @@ export function createTerrain() {
           vec3 n = normalize(vFarN);
           vec3 w = pow(abs(n), vec3(4.0));
           w /= w.x + w.y + w.z;
-          // The side tile's slope climbs away from the viewer, so it runs up the hill on either face.
           vec3 top = texture2D(tForestTop, vec2(p.x, -p.z)).rgb;
-          vec3 sx = texture2D(tForestSide, vec2(p.z * sign(n.x), p.y)).rgb;
-          vec3 sz = texture2D(tForestSide, vec2(-p.x * sign(n.z), p.y)).rgb;
+          // Crowns seen from afar read as rounded clumps on any face, so steep faces use the
+          // same tile (turned and rescaled) rather than side-on spires that look stretched.
+          vec3 sx = texture2D(tForestTop, vec2(p.z, p.y) * 1.13 + 0.37).rgb;
+          vec3 sz = texture2D(tForestTop, vec2(p.y, p.x) * 0.89 + 0.71).rgb;
           vec3 trees = top * w.y + sx * w.x + sz * w.z;
           // Only the green of the forest: rock and snow keep their own colour.
           vec3 dc = diffuseColor.rgb;

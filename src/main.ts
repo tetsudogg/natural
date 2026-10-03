@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createClouds } from './atmosphere';
 import { createPost, QUALITY_LABEL, QUALITY_PIXEL_RATIO, type Quality } from './post';
-import { createTerrain, setForestTextures } from './terrain';
+import { createTerrain, setForestTexture } from './terrain';
 import { bakeForest } from './forestbake';
 import { createVegetation, updateDistanceCulling, windUniforms } from './vegetation';
 import { createStream, createFireflies, NO_REFLECT_LAYER } from './water';
@@ -95,7 +95,7 @@ async function main() {
   const sky = createSky(scene, renderer);
   scene.add(createTerrain());
   const forestTiles = bakeForest(renderer);
-  setForestTextures(forestTiles.top, forestTiles.side);
+  setForestTexture(forestTiles.top);
   const veg = createVegetation();
   scene.add(veg.group);
   const floor = createForestFloor(veg.treeSpots, veg.rockSpots);
@@ -231,6 +231,7 @@ async function main() {
 
   const hud = $('hud');
   const help = $('help');
+  const clockEl = $('clock');
   const pause = $('pause');
 
   function lock() {
@@ -498,6 +499,8 @@ async function main() {
     }
 
     hour = (hour + dt * TIME_SPEEDS[speedIndex].hoursPerSecond) % 24;
+    const clockText = `${Math.floor(hour)}:${String(Math.floor((hour % 1) * 60)).padStart(2, '0')}`;
+    if (clockText !== clockEl.textContent) clockEl.textContent = clockText;
     windUniforms.uTime.value = elapsed;
     windUniforms.uWind.value = 0.5 + 0.35 * Math.sin(elapsed * 0.13) * Math.sin(elapsed * 0.071);
 
