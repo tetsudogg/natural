@@ -126,7 +126,7 @@ function deadTreeGeometry(seed: number) {
 }
 
 // A larch: a slim, airy spire of soft green tiers. A spruce: a darker, denser cone.
-function coniferGeometry(seed: number, tiers: number, width: number, height: number) {
+export function coniferGeometry(seed: number, tiers: number, width: number, height: number) {
   const rnd = mulberry32(seed);
   const parts: THREE.BufferGeometry[] = [];
   const trunk = new THREE.CylinderGeometry(0.1, 0.22, height * 0.5, 5);
@@ -226,16 +226,17 @@ export function createPond() {
   // Larch woods on the shores beyond the walkable valley, with dark spruces among them.
   const kinds = [coniferGeometry(11, 5, 1.7, 13), coniferGeometry(12, 6, 2.3, 12)];
   const lists: { m: THREE.Matrix4; c: THREE.Color }[][] = [[], []];
-  for (let tries = 0; lists[0].length + lists[1].length < 22000 && tries < 900000; tries++) {
-    const x = POND.x + (rnd() * 2 - 1) * 900;
-    const z = 240 + rnd() * 1250;
+  for (let tries = 0; lists[0].length + lists[1].length < 9000 && tries < 600000; tries++) {
+    const x = POND.x + (rnd() * 2 - 1) * 700;
+    const z = 240 + rnd() * 900;
     // Only outside the detailed map, where the normal forest is not drawn.
     if (Math.abs(x) < HALF - 2 && Math.abs(z) < HALF - 2) continue;
     const h = heightAt(x, z);
     const above = h - POND_LEVEL;
-    if (above < 0.6 || above > 320) continue;
+    if (above < 0.6 || above > 45) continue;
     // Thickest near the water, thinning up the slopes, in loose stands.
-    const keep = (0.4 + pondMask(x, z) * 0.35) * (1 - above / 400);
+    // Only the lower slopes nearest the water; above them the baked forest texture takes over.
+    const keep = (0.55 + pondMask(x, z) * 0.35) * (1 - smoothstep(20, 45, above));
     if (rnd() > keep || fbm(x * 0.01, z * 0.01, 2) < 0.3) continue;
     const spruce = rnd() < 0.2 + Math.min(0.55, above / 200) ? 1 : 0;
     const s = 0.55 + rnd() * 0.9;
@@ -255,36 +256,6 @@ export function createPond() {
     });
     group.add(mesh);
   });
-
-  // Further up and further off, a cover of plain cones: cheap enough to clothe whole
-  // hillsides, so the slopes read as forest rather than bare ground.
-  const cone = new THREE.ConeGeometry(2.4, 13, 6, 1, true);
-  cone.translate(0, 7, 0);
-  const far: { m: THREE.Matrix4; c: THREE.Color }[] = [];
-  for (let tries = 0; far.length < 45000 && tries < 900000; tries++) {
-    const x = POND.x + (rnd() * 2 - 1) * 1400;
-    const z = 260 + rnd() * 1550;
-    if (Math.abs(x) < HALF + 20 && Math.abs(z) < HALF + 20) continue;
-    const h = heightAt(x, z);
-    const above = h - POND_LEVEL;
-    if (above < 6 || above > 420) continue;
-    // Thinning towards the tree line, in stands with gaps between.
-    if (rnd() > 0.85 * (1 - smoothstep(250, 420, above)) || fbm(x * 0.008 + 3, z * 0.008 - 9, 2) < 0.26) continue;
-    const s = 0.6 + rnd() * 0.8;
-    const m = new THREE.Matrix4().compose(new THREE.Vector3(x, h - 0.5, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6.28), new THREE.Vector3(s, s * (0.8 + rnd() * 0.5), s));
-    const larchy = rnd() < 0.35 - Math.min(0.3, above / 600);
-    const v = 0.75 + rnd() * 0.4;
-    const c = larchy
-      ? new THREE.Color().setRGB(0.27, 0.38, 0.15, THREE.SRGBColorSpace).multiplyScalar(v)
-      : new THREE.Color().setRGB(0.09, 0.17, 0.11, THREE.SRGBColorSpace).multiplyScalar(v);
-    far.push({ m, c });
-  }
-  const farCones = new THREE.InstancedMesh(cone, coniferMat, far.length);
-  far.forEach(({ m, c }, k) => {
-    farCones.setMatrixAt(k, m);
-    farCones.setColorAt(k, c);
-  });
-  group.add(farCones);
 
   const mirror = createMirror(target, textureMatrix, 0.5, 0.00005);
   const frustum = new THREE.Frustum();

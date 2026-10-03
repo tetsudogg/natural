@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FOREST_TILE } from './forestbake';
 import { HALF, POND_LEVEL, brookEdgeDist, farRange, forestDensity, heightAt, nearestBrook, pondMask, streamDist, waterDist, waterLevel } from './world';
 import { fbm, lerp, smoothstep } from './noise';
 import { surface } from './textures';
@@ -14,6 +15,12 @@ const MOSS = srgb(0.26, 0.42, 0.1);
 const ROCK = srgb(0.4, 0.39, 0.36);
 const FAR_FOREST = srgb(0.1, 0.24, 0.07);
 const tmpC = new THREE.Color();
+// Filled in by bakeForest once the renderer exists.
+const forestUniforms = { top: { value: null as THREE.Texture | null }, side: { value: null as THREE.Texture | null } };
+export function setForestTextures(top: THREE.Texture, side: THREE.Texture) {
+  forestUniforms.top.value = top;
+  forestUniforms.side.value = side;
+}
 const FAR_ROCK = srgb(0.42, 0.42, 0.44);
 const SNOW = srgb(0.92, 0.94, 0.97);
 
@@ -32,7 +39,7 @@ function colorAt(x: number, y: number, z: number, slope: number, out: THREE.Colo
     // Forest canopy from afar: dark, mottled by stands of lighter larch and deeper spruce.
     const stand = fbm(x * 0.018 - 11, z * 0.018 + 6, 3);
     tmpC.copy(FAR_FOREST).multiplyScalar(0.7 + 0.6 * stand);
-    out.lerp(tmpC, edge * (1 - smoothstep(1.2, 1.8, slope) * 0.6));
+    out.lerp(tmpC, edge * (1 - smoothstep(2.2, 3.2, slope) * 0.6));
     // High up: bare grey rock above the trees, snow lying in the gullies near the top.
     // Only the great range to the north climbs past the trees.
     const up = farRange(x, z) + (y - POND_LEVEL) * 0.15;
@@ -186,37 +193,40 @@ export function createTerrain() {
   main.receiveShadow = true;
 
   const farMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
-  // From afar the forest is a texture of crowns: lit tops and dark gaps, finer up close.
+  // From afar the forest wears the baked tiles of real crowns (forestbake.ts): seen from
+  // above on gentle ground, from the side on steep slopes.
   farMat.onBeforeCompile = (shader) => {
+    shader.uniforms.tForestTop = forestUniforms.top;
+    shader.uniforms.tForestSide = forestUniforms.side;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vFarW;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFarW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      .replace('#include <common>', '#include <common>\nvarying vec3 vFarW;\nvarying vec3 vFarN;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFarW = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvFarN = normalize(mat3(modelMatrix) * objectNormal);');
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
         `#include <common>
         varying vec3 vFarW;
-        float fh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-        float fn(vec2 p) {
-          vec2 i = floor(p), f = fract(p);
-          vec2 u = f * f * (3.0 - 2.0 * f);
-          return mix(mix(fh(i), fh(i + vec2(1, 0)), u.x), mix(fh(i + vec2(0, 1)), fh(i + vec2(1, 1)), u.x), u.y);
-        }`,
+        varying vec3 vFarN;
+        uniform sampler2D tForestTop;
+        uniform sampler2D tForestSide;`,
       )
       .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
         {
-          float dist = length(vFarW - cameraPosition);
-          vec2 p = vFarW.xz;
-          float crowns = fn(p * 0.11) * smoothstep(1400.0, 300.0, dist);
-          float stands = fn(p * 0.025 + 7.0);
-          float clumps = fn(p * 0.006 - 3.0);
-          float tree = mix(0.5, crowns, 0.75) * 0.5 + stands * 0.3 + clumps * 0.2;
+          vec3 p = vFarW / ${FOREST_TILE.toFixed(1)};
+          vec3 n = normalize(vFarN);
+          vec3 w = pow(abs(n), vec3(4.0));
+          w /= w.x + w.y + w.z;
+          // The side tile's slope climbs away from the viewer, so it runs up the hill on either face.
+          vec3 top = texture2D(tForestTop, vec2(p.x, -p.z)).rgb;
+          vec3 sx = texture2D(tForestSide, vec2(p.z * sign(n.x), p.y)).rgb;
+          vec3 sz = texture2D(tForestSide, vec2(-p.x * sign(n.z), p.y)).rgb;
+          vec3 trees = top * w.y + sx * w.x + sz * w.z;
           // Only the green of the forest: rock and snow keep their own colour.
-          float forest = clamp((diffuseColor.g - diffuseColor.r) * 9.0, 0.0, 1.0);
-          diffuseColor.rgb *= mix(1.0, mix(0.55, 1.35, tree), forest);
-          diffuseColor.rgb *= mix(0.9, 1.08, fn(p * 0.04 + 31.0));
+          vec3 dc = diffuseColor.rgb;
+          float forest = smoothstep(0.15, 0.5, (dc.g - max(dc.r, dc.b)) / max(dc.g, 0.001));
+          diffuseColor.rgb = mix(dc, trees * 2.2, forest);
         }`,
       );
   };

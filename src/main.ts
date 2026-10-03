@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { createClouds } from './atmosphere';
 import { createPost, QUALITY_LABEL, QUALITY_PIXEL_RATIO, type Quality } from './post';
-import { createTerrain } from './terrain';
+import { createTerrain, setForestTextures } from './terrain';
+import { bakeForest } from './forestbake';
 import { createVegetation, updateDistanceCulling, windUniforms } from './vegetation';
 import { createStream, createFireflies, NO_REFLECT_LAYER } from './water';
 import { createBrooks } from './brooks';
@@ -93,6 +94,8 @@ async function main() {
 
   const sky = createSky(scene, renderer);
   scene.add(createTerrain());
+  const forestTiles = bakeForest(renderer);
+  setForestTextures(forestTiles.top, forestTiles.side);
   const veg = createVegetation();
   scene.add(veg.group);
   const floor = createForestFloor(veg.treeSpots, veg.rockSpots);
