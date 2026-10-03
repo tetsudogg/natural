@@ -1,0 +1,603 @@
+:root {
+  --ink: #f2f1ea;
+  --ink-soft: rgba(242, 241, 234, 0.72);
+  --veil: rgba(12, 18, 14, 0.55);
+  --line: rgba(242, 241, 234, 0.25);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0d130f;
+  color: var(--ink);
+  font-family: 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', system-ui, sans-serif;
+}
+
+canvas#scene {
+  touch-action: none;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at center, rgba(10, 16, 12, 0.35), rgba(10, 16, 12, 0.75));
+  padding: 16px;
+  z-index: 10;
+  transition: opacity 1.2s ease;
+}
+
+.overlay.fade {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.title-card {
+  text-align: center;
+  max-width: 560px;
+}
+
+.title-card h1 {
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
+  font-weight: 500;
+  font-size: clamp(48px, 10vw, 88px);
+  letter-spacing: 0.12em;
+  margin: 0;
+}
+
+.tagline {
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
+  font-size: 18px;
+  color: var(--ink-soft);
+  margin: 8px 0 32px;
+}
+
+.loading {
+  color: var(--ink-soft);
+}
+
+#start {
+  font: inherit;
+  font-size: 18px;
+  letter-spacing: 0.2em;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--ink-soft);
+  border-radius: 999px;
+  padding: 12px 40px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+#start:hover,
+#start:focus-visible {
+  background: rgba(242, 241, 234, 0.12);
+  outline: none;
+}
+
+.keys {
+  list-style: none;
+  padding: 0;
+  margin: 32px 0 0;
+  font-size: 14px;
+  line-height: 2.2;
+  color: var(--ink-soft);
+}
+
+kbd {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--ink);
+}
+
+.note {
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin-top: 20px;
+}
+
+.title-card.small p {
+  font-size: 18px;
+  letter-spacing: 0.1em;
+}
+
+#hud {
+  position: fixed;
+  inset: auto 0 0 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 16px;
+  pointer-events: none;
+  transition: opacity 0.8s ease;
+  z-index: 5;
+}
+
+#hud.hidden {
+  opacity: 0;
+}
+
+.help {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 14px;
+  margin: 0 auto;
+  width: fit-content;
+  /* Leaves room for the clock on the left. */
+  max-width: calc(100vw - 2 * 100px);
+  font-size: 12px;
+  line-height: 1.9;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(10, 14, 10, 0.22);
+  border-radius: 10px;
+  padding: 4px 14px;
+  opacity: 0.75;
+  transition: opacity 1s ease;
+}
+
+.help kbd {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.help.off {
+  opacity: 0;
+}
+
+/* The time of day in the game, bottom-left, in the same quiet style as the key guide. */
+#clock {
+  position: fixed;
+  left: 16px;
+  bottom: 14px;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  line-height: 1.9;
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(10, 14, 10, 0.22);
+  border-radius: 10px;
+  padding: 2px 12px;
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+body.touch #clock {
+  top: calc(12px + env(safe-area-inset-top));
+  bottom: auto;
+}
+
+/* Minimap: a see-through disc in the bottom-right corner, heading up, with a compass. */
+#minimap {
+  position: fixed;
+  right: 16px;
+  bottom: 58px;
+  width: 150px;
+  height: 150px;
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+#mini {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(10, 14, 10, 0.22);
+}
+
+#compass {
+  position: absolute;
+  left: -6px;
+  top: -6px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(10, 14, 10, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+#compass b {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -15px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+#needle {
+  position: absolute;
+  inset: 4px;
+}
+
+#needle span {
+  position: absolute;
+  left: 50%;
+  width: 0;
+  height: 0;
+  margin-left: -4px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+}
+
+#needle .n {
+  top: 0;
+  border-bottom: 14px solid #e8574a;
+}
+
+#needle .s {
+  bottom: 0;
+  border-top: 14px solid #f2f1ea;
+}
+
+body.touch #minimap {
+  top: calc(12px + env(safe-area-inset-top));
+  bottom: auto;
+  right: calc(12px + env(safe-area-inset-right));
+  width: 110px;
+  height: 110px;
+}
+
+body.touch #pack {
+  top: 140px;
+}
+
+/* The full map. */
+#map {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 12, 9, 0.55);
+  padding: 16px;
+}
+
+.map-frame {
+  position: relative;
+  width: min(92vw, 92vh + 120px);
+  height: min(92vh, 92vw);
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(10, 14, 10, 0.6);
+  display: flex;
+  flex-direction: column;
+}
+
+#map-canvas {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  cursor: grab;
+  touch-action: none;
+  opacity: 0.92;
+}
+
+.map-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: rgba(10, 14, 10, 0.55);
+}
+
+.map-title {
+  font-weight: 600;
+  letter-spacing: 0.15em;
+}
+
+.map-tip {
+  flex: 1;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+#map button,
+#pin-pop button {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#map button:hover,
+#pin-pop button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+#pin-pop {
+  position: absolute;
+  width: 290px;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(16, 22, 17, 0.92);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#pin-note {
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  outline: none;
+}
+
+.pin-actions {
+  display: flex;
+  gap: 6px;
+}
+
+#pin-pop #pin-del {
+  margin-left: auto;
+  color: var(--ink-soft);
+}
+
+#pin-swatches {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+#pin-swatches button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+}
+
+@media (max-width: 600px) {
+  .map-tip {
+    display: none;
+  }
+}
+
+#toast {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  background: var(--veil);
+  border-radius: 999px;
+  padding: 8px 20px;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+  pointer-events: none;
+  z-index: 20;
+}
+
+#toast.show {
+  opacity: 1;
+}
+
+/* What you can do right here: the start of the bottom bar (desktop) or a small pill
+   above the bottom edge (touch). Never mid-screen. */
+#hint {
+  display: none;
+  color: #fff;
+  font-weight: 600;
+}
+
+#hint.show {
+  display: inline;
+}
+
+.help #hint.show::after {
+  content: '｜';
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.4);
+  margin: 0 6px;
+}
+
+body.touch #hint.show {
+  display: block;
+  position: fixed;
+  left: 50%;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  font-size: 12px;
+  font-weight: 500;
+  background: rgba(10, 14, 10, 0.3);
+  border-radius: 999px;
+  padding: 4px 12px;
+  pointer-events: none;
+}
+
+body.viewing #hint,
+body.viewing #minimap {
+  display: none !important;
+}
+
+#fade {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1.4s ease;
+}
+
+#fade.show {
+  opacity: 1;
+}
+
+#pack {
+  position: fixed;
+  right: 20px;
+  top: 20px;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  pointer-events: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+body.viewing #pack {
+  display: none;
+}
+
+body.viewing {
+  cursor: none;
+}
+
+body.viewing.pointer {
+  cursor: default;
+}
+
+/* Touch controls: only on touch screens, only while walking around. */
+#touch,
+.touch-keys {
+  display: none;
+}
+
+body.touch .touch-keys {
+  display: block;
+  font-size: 13px;
+  line-height: 1.9;
+  color: var(--ink-soft);
+  margin-top: 24px;
+}
+
+body.touch .keys,
+body.touch .help {
+  display: none;
+}
+
+body.touch.playing #touch {
+  display: block;
+}
+
+body.viewing #touch {
+  display: none !important;
+}
+
+#stick {
+  position: fixed;
+  width: 112px;
+  height: 112px;
+  margin: -56px 0 0 -56px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(10, 14, 10, 0.16);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 6;
+}
+
+#stick.show {
+  opacity: 1;
+}
+
+#knob {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+}
+
+#touch-buttons {
+  position: fixed;
+  right: calc(12px + env(safe-area-inset-right));
+  bottom: calc(64px + env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: repeat(2, 52px);
+  gap: 10px;
+  direction: rtl;
+  z-index: 6;
+}
+
+#touch-buttons button {
+  direction: ltr;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(10, 14, 10, 0.26);
+  color: rgba(255, 255, 255, 0.82);
+  font: inherit;
+  font-size: 9px;
+  line-height: 1.1;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#touch-buttons button b {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+#touch-buttons button:active {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+#touch-buttons #touch-cancel {
+  grid-column: 1 / -1;
+  width: 114px;
+  border-radius: 26px;
+  flex-direction: row;
+  gap: 6px;
+  font-size: 12px;
+}
+
+body.touch {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay,
+  #hud,
+  #toast {
+    transition: none;
+  }
+}
