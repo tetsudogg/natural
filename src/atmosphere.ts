@@ -45,9 +45,12 @@ THREE.ShaderChunk.fog_fragment = /* glsl */ `
     const float k2 = 0.004;
     float dh2 = vFogWorldPos.y - cameraPosition.y;
     float haze = dh2 > 0.5 ? (1.0 - exp(-k2 * dh2)) / (k2 * dh2) : 1.0;
-    float optical = dist * (mist + 0.00035 * haze);
-    float fogFactor = 1.0 - exp(-optical);
-    gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, fogFactor);
+    // Mist takes the fog's own colour; the thin distance haze is bluer, so far ranges sink
+    // into blue air and read as far away. Even high peaks keep some of it.
+    float mistF = 1.0 - exp(-dist * mist);
+    float hazeF = 1.0 - exp(-dist * 0.00035 * mix(haze, 1.0, 0.3));
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, mistF);
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor * vec3(0.72, 0.86, 1.08), hazeF);
   }
 #endif
 `;

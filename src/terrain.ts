@@ -42,9 +42,9 @@ function colorAt(x: number, y: number, z: number, slope: number, out: THREE.Colo
     // High up: bare grey rock above the trees, snow lying in the gullies near the top.
     // Only the great range to the north climbs past the trees.
     const up = farRange(x, z) + (y - POND_LEVEL) * 0.15;
-    out.lerp(FAR_ROCK, smoothstep(190, 290, up + (n - 0.5) * 80) * (0.6 + 0.4 * smoothstep(0.5, 1, slope)));
+    out.lerp(FAR_ROCK, smoothstep(240, 360, up + (n - 0.5) * 80) * (0.6 + 0.4 * smoothstep(0.5, 1, slope)));
     const gully = smoothstep(0.52, 0.68, fbm(x * 0.012 + 5, z * 0.004, 3));
-    out.lerp(SNOW, smoothstep(330, 430, up + gully * 140) * (1 - smoothstep(1.4, 2.2, slope) * 0.7));
+    out.lerp(SNOW, smoothstep(430, 560, up + gully * 160) * (1 - smoothstep(1.4, 2.2, slope) * 0.7));
   }
   return out;
 }
@@ -207,6 +207,11 @@ export function createTerrain() {
         varying vec3 vFarN;
         uniform sampler2D tForestTop;
 `,
+      )
+      .replace(
+        '#include <lights_fragment_end>',
+        // Forest and rock are matte: no sheen off the sky on ridges facing away from the sun.
+        '#include <lights_fragment_end>\nreflectedLight.directSpecular = vec3(0.0);\nreflectedLight.indirectSpecular = vec3(0.0);',
       )
       .replace(
         '#include <color_fragment>',

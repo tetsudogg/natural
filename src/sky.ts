@@ -20,7 +20,7 @@ export interface DayState {
 
 const NIGHT_FOG = new THREE.Color().setRGB(0.018, 0.024, 0.04, THREE.SRGBColorSpace);
 const DUSK_FOG = new THREE.Color().setRGB(0.75, 0.52, 0.4, THREE.SRGBColorSpace);
-const DAY_FOG = new THREE.Color().setRGB(0.6, 0.73, 0.84, THREE.SRGBColorSpace);
+const DAY_FOG = new THREE.Color().setRGB(0.56, 0.71, 0.88, THREE.SRGBColorSpace);
 const MIST_FOG = new THREE.Color().setRGB(0.78, 0.8, 0.8, THREE.SRGBColorSpace);
 
 export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
@@ -39,7 +39,7 @@ export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
   sky.material.fragmentShader = sky.material.fragmentShader.replace(
     'gl_FragColor = vec4( texColor, 1.0 );',
     `float skyL = dot( texColor, vec3( 0.2126, 0.7152, 0.0722 ) );
-    texColor = max( mix( vec3( skyL ), texColor, 1.5 ), 0.0 ) * 0.42;
+    texColor = max( mix( vec3( skyL ), texColor, 1.9 ), 0.0 ) * 0.36;
     gl_FragColor = vec4( texColor, 1.0 );`,
   );
   scene.add(sky);

@@ -83,11 +83,12 @@ function lowland(x: number, z: number) {
 
 // The far range beyond the pond: a long wall of jagged peaks with snow in the gullies.
 export function farRange(x: number, z: number) {
-  const env = Math.exp(-(((z - 1950) / 360) ** 2)) * (1 - smoothstep(1400, 2600, Math.abs(x)) * 0.6);
+  // Far beyond the pond: a high snowy range, about 2.5 km off, rising behind the hills.
+  const env = Math.exp(-(((z - 2700) / 320) ** 2)) * (1 - smoothstep(1600, 3000, Math.abs(x)) * 0.6);
   if (env < 0.01) return 0;
-  const ridge = 1 - Math.abs(2 * fbm(x * 0.0018 + 3, z * 0.0018 + 9, 4) - 1);
-  const jag = 1 - Math.abs(2 * fbm(x * 0.008 - 4, z * 0.008 + 2, 3) - 1);
-  return env * (200 + 230 * ridge * ridge + 100 * jag * jag);
+  const ridge = 1 - Math.abs(2 * fbm(x * 0.0014 + 3, z * 0.0014 + 9, 4) - 1);
+  const jag = 1 - Math.abs(2 * fbm(x * 0.006 - 4, z * 0.006 + 2, 3) - 1);
+  return env * (330 + 400 * ridge * ridge + 150 * jag * jag);
 }
 
 // 0 = open ground, 1 = dense forest.
